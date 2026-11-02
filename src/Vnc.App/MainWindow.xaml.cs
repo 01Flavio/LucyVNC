@@ -8,6 +8,7 @@ using System.Windows.Controls;
 using System.Windows.Input;
 using System.Windows.Media;
 using System.Windows.Media.Imaging;
+using System.Windows.Shapes;
 using System.Windows.Threading;
 using Microsoft.Data.Sqlite;
 using Vnc.Core;
@@ -36,6 +37,8 @@ public partial class MainWindow : Window
     public MainWindow()
     {
         InitializeComponent();
+        DarkWindowChrome.Apply(this);
+        UpdateNavigationSelection(_currentPage);
         Loaded += MainWindow_Loaded;
         Closing += MainWindow_Closing;
         PreviewKeyDown += MainWindow_PreviewKeyDown;
@@ -73,6 +76,7 @@ public partial class MainWindow : Window
         }
 
         _currentPage = page;
+        UpdateNavigationSelection(page);
         ComputerPage.Visibility = page is "computers" or "favorites" ? Visibility.Visible : Visibility.Collapsed;
         HistoryPage.Visibility = page == "recent" ? Visibility.Visible : Visibility.Collapsed;
         AccessPage.Visibility = page == "access" ? Visibility.Visible : Visibility.Collapsed;
@@ -97,11 +101,39 @@ public partial class MainWindow : Window
             "sessions" => "Cada conexão mantém seu próprio ciclo de vida.",
             _ => "Gerencie destinos e abra sessões independentes.",
         };
-        SearchBox.Visibility = page is "computers" or "favorites" ? Visibility.Visible : Visibility.Collapsed;
+        SearchContainer.Visibility = page is "computers" or "favorites" ? Visibility.Visible : Visibility.Collapsed;
         await RefreshCurrentPageAsync();
     }
 
-    private async void SearchBox_TextChanged(object sender, TextChangedEventArgs e) => await RefreshComputersAsync();
+    private void UpdateNavigationSelection(string selectedPage)
+    {
+        var navigation = new[]
+        {
+            ComputersNavigation, RecentNavigation, FavoritesNavigation,
+            AccessNavigation, SettingsNavigation, SessionsNavigation,
+        };
+        foreach (var button in navigation)
+        {
+            var selected = string.Equals(button.Tag as string, selectedPage, StringComparison.Ordinal);
+            button.Background = selected ? (Brush)FindResource("SurfaceElevated") : Brushes.Transparent;
+            button.BorderBrush = selected ? (Brush)FindResource("Primary") : Brushes.Transparent;
+            button.BorderThickness = new Thickness(1);
+            button.FontWeight = selected ? FontWeights.SemiBold : FontWeights.Normal;
+            if (button.Content is StackPanel stack && stack.Children.OfType<System.Windows.Shapes.Path>().FirstOrDefault() is { } icon)
+            {
+                icon.Fill = selected ? (Brush)FindResource("Accent") : (Brush)FindResource("TextSecondary");
+            }
+        }
+    }
+
+    private async void SearchBox_TextChanged(object sender, TextChangedEventArgs e)
+    {
+        SearchPlaceholder.Visibility = string.IsNullOrEmpty(SearchBox.Text) ? Visibility.Visible : Visibility.Collapsed;
+        await RefreshComputersAsync();
+    }
+
+    private void DirectHostBox_TextChanged(object sender, TextChangedEventArgs e) =>
+        DirectHostPlaceholder.Visibility = string.IsNullOrEmpty(DirectHostBox.Text) ? Visibility.Visible : Visibility.Collapsed;
 
     private async void GroupFilterBox_SelectionChanged(object sender, SelectionChangedEventArgs e)
     {
@@ -867,7 +899,11 @@ public partial class MainWindow : Window
         if (_workspace is not null)
         {
             _workspace.Show();
-            _workspace.WindowState = WindowState.Normal;
+            if (_workspace.WindowState == WindowState.Minimized)
+            {
+                _workspace.WindowState = WindowState.Normal;
+            }
+
             _workspace.Activate();
         }
         else
@@ -1542,37 +1578,74 @@ public partial class MainWindow : Window
 
         private UIElement CreateContent()
         {
-            var root = new DockPanel();
-            var toolbar = new WrapPanel { Margin = new Thickness(0, 0, 0, 8) };
-            var disconnect = new Button { Content = "Desconectar", Tag = this };
+            var root = new Grid { Background = (Brush)Application.Current.FindResource("Canvas") };
+            root.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });
+            root.RowDefinitions.Add(new RowDefinition { Height = new GridLength(1, GridUnitType.Star) });
+
+            var toolbar = new DockPanel
+            {
+                Background = (Brush)Application.Current.FindResource("Surface"),
+                LastChildFill = true,
+                Margin = new Thickness(0, 0, 0, 6),
+            };
+            var actions = new WrapPanel { VerticalAlignment = VerticalAlignment.Center, Margin = new Thickness(3, 0, 0, 0) };
+            var disconnect = CreateToolbarButton("Desconectar", "Encerrar esta sessão", "IconDisconnect", this);
             disconnect.Click += AppSessionDisconnect_Click;
-            var fit = new Button { Content = "Ajustar", Tag = this };
+            var fit = CreateToolbarButton("Ajustar", "Ajustar a imagem à janela", "IconFit", this);
             fit.Click += AppFitToWindow_Click;
-            var actual = new Button { Content = "100%", Tag = this };
+            var actual = CreateToolbarButton("100%", "Exibir em escala 100%", "IconComputer", this);
             actual.Click += AppActualSize_Click;
-            var fullScreen = new Button { Content = "Tela cheia", Tag = this };
+            var fullScreen = CreateToolbarButton("Tela cheia", "Alternar tela cheia", "IconFullscreen", this);
             fullScreen.Click += AppFullScreen_Click;
             ViewOnlyCheckBox = new CheckBox
             {
                 Content = "Somente visualização",
                 Tag = this,
-                Foreground = Brushes.Gainsboro,
                 VerticalAlignment = VerticalAlignment.Center,
-                Margin = new Thickness(8, 0, 14, 0),
+                Margin = new Thickness(8, 0, 10, 0),
+                ToolTip = "Bloquear mouse e teclado remotos",
             };
             ViewOnlyCheckBox.Checked += AppViewOnly_Changed;
             ViewOnlyCheckBox.Unchecked += AppViewOnly_Changed;
-            var cad = new Button { Content = "Ctrl+Alt+Del indisponível", IsEnabled = false };
-            StatusText = new TextBlock { Text = "Conectando...", Foreground = new SolidColorBrush(Color.FromRgb(159, 170, 181)), VerticalAlignment = VerticalAlignment.Center };
-            toolbar.Children.Add(disconnect);
-            toolbar.Children.Add(fit);
-            toolbar.Children.Add(actual);
-            toolbar.Children.Add(fullScreen);
-            toolbar.Children.Add(ViewOnlyCheckBox);
-            toolbar.Children.Add(cad);
-            toolbar.Children.Add(StatusText);
-            DockPanel.SetDock(toolbar, Dock.Top);
+            var cad = CreateToolbarButton("Ctrl+Alt+Del", "Indisponível neste protocolo", "IconKeyboard", this);
+            cad.IsEnabled = false;
+            cad.ToolTip = "Ctrl+Alt+Del não é suportado por este servidor";
+            actions.Children.Add(disconnect);
+            actions.Children.Add(fit);
+            actions.Children.Add(actual);
+            actions.Children.Add(fullScreen);
+            actions.Children.Add(ViewOnlyCheckBox);
+            actions.Children.Add(cad);
+            DockPanel.SetDock(actions, Dock.Left);
+            toolbar.Children.Add(actions);
+
+            var statusPanel = new StackPanel
+            {
+                Orientation = Orientation.Horizontal,
+                VerticalAlignment = VerticalAlignment.Center,
+                HorizontalAlignment = HorizontalAlignment.Right,
+                Margin = new Thickness(10, 0, 12, 0),
+            };
+            statusPanel.Children.Add(new Ellipse
+            {
+                Width = 7,
+                Height = 7,
+                Fill = (Brush)Application.Current.FindResource("Success"),
+                VerticalAlignment = VerticalAlignment.Center,
+                Margin = new Thickness(0, 0, 8, 0),
+            });
+            StatusText = new TextBlock
+            {
+                Text = "Conectando...",
+                Foreground = (Brush)Application.Current.FindResource("TextSecondary"),
+                VerticalAlignment = VerticalAlignment.Center,
+                FontSize = 11,
+            };
+            statusPanel.Children.Add(StatusText);
+            DockPanel.SetDock(statusPanel, Dock.Right);
+            toolbar.Children.Add(statusPanel);
             root.Children.Add(toolbar);
+
             FitHost = new Grid();
             ActualHost = new ScrollViewer
             {
@@ -1586,15 +1659,46 @@ public partial class MainWindow : Window
             imageHosts.Children.Add(ActualHost);
             var border = new Border
             {
-                Background = new SolidColorBrush(Color.FromRgb(9, 11, 14)),
-                BorderBrush = new SolidColorBrush(Color.FromRgb(52, 60, 71)),
+                Background = (Brush)Application.Current.FindResource("Canvas"),
+                BorderBrush = (Brush)Application.Current.FindResource("Line"),
                 BorderThickness = new Thickness(1),
-                CornerRadius = new CornerRadius(8),
-                Padding = new Thickness(6),
+                CornerRadius = new CornerRadius(9),
+                Padding = new Thickness(4),
                 Child = imageHosts,
             };
+            Grid.SetRow(border, 1);
             root.Children.Add(border);
             return root;
+        }
+
+        private static Button CreateToolbarButton(string label, string toolTip, string iconKey, ViewerTabState state)
+        {
+            var button = new Button
+            {
+                Style = (Style)Application.Current.FindResource("CompactButton"),
+                Tag = state,
+                ToolTip = toolTip,
+                Padding = new Thickness(8, 5, 9, 5),
+            };
+            System.Windows.Automation.AutomationProperties.SetName(button, toolTip);
+            var content = new StackPanel { Orientation = Orientation.Horizontal };
+            content.Children.Add(new System.Windows.Shapes.Path
+            {
+                Data = (Geometry)Application.Current.FindResource(iconKey),
+                Width = 13,
+                Height = 13,
+                Fill = (Brush)Application.Current.FindResource("Accent"),
+                Stretch = Stretch.Uniform,
+                Margin = new Thickness(0, 0, 6, 0),
+            });
+            content.Children.Add(new TextBlock
+            {
+                Text = label,
+                VerticalAlignment = VerticalAlignment.Center,
+                FontSize = 11,
+            });
+            button.Content = content;
+            return button;
         }
 
         private void AppSessionDisconnect_Click(object sender, RoutedEventArgs e)

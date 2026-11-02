@@ -4,6 +4,7 @@
     <OutputType>WinExe</OutputType>
     <AssemblyName>LucyViewer</AssemblyName>
     <TargetFramework>net8.0-windows</TargetFramework>
+    <ApplicationIcon>Assets\LucyVNC.ico</ApplicationIcon>
     <Nullable>enable</Nullable>
     <ImplicitUsings>enable</ImplicitUsings>
     <UseWPF>true</UseWPF>
@@ -16,6 +17,11 @@
     <ProjectReference Include="..\Vnc.Viewer\Vnc.Viewer.csproj" />
     <ProjectReference Include="..\Vnc.Platform.Windows\Vnc.Platform.Windows.csproj" />
     <ProjectReference Include="..\Vnc.Infrastructure\Vnc.Infrastructure.csproj" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <Resource Include="Assets\LucyVNC.ico" />
+    <Resource Include="Assets\LucyVNC-Icon.png" />
   </ItemGroup>
 
 </Project>

@@ -21,4 +21,12 @@
     <ProjectReference Include="..\..\src\Vnc.Infrastructure\Vnc.Infrastructure.csproj" />
   </ItemGroup>
 
+  <ItemGroup>
+    <None Include="..\..\src\Vnc.App\Themes\LucyTheme.xaml" Link="UiAssets\LucyTheme.xaml" CopyToOutputDirectory="PreserveNewest" />
+    <None Include="..\..\src\Vnc.App\MainWindow.xaml" Link="UiAssets\MainWindow.xaml" CopyToOutputDirectory="PreserveNewest" />
+    <None Include="..\..\src\Vnc.App\RemoteWorkspaceWindow.xaml" Link="UiAssets\RemoteWorkspaceWindow.xaml" CopyToOutputDirectory="PreserveNewest" />
+    <None Include="..\..\src\Vnc.App\Assets\LucyVNC.ico" Link="UiAssets\LucyVNC.ico" CopyToOutputDirectory="PreserveNewest" />
+    <None Include="..\..\src\Vnc.App\Assets\LucyVNC-Icon.png" Link="UiAssets\LucyVNC-Icon.png" CopyToOutputDirectory="PreserveNewest" />
+  </ItemGroup>
+
 </Project>

@@ -1,8 +1,10 @@
 using System.ComponentModel;
+using System.Globalization;
 using System.Windows;
 using System.Windows.Controls;
 using System.Windows.Input;
 using System.Windows.Media;
+using System.Windows.Shapes;
 
 namespace Vnc.App;
 
@@ -19,6 +21,7 @@ public partial class RemoteWorkspaceWindow : Window
     {
         _manager = manager;
         InitializeComponent();
+        DarkWindowChrome.Apply(this);
         PreviewKeyDown += (_, e) => _manager.HandleWorkspaceKeyDown(e);
         PreviewKeyUp += (_, e) => _manager.HandleWorkspaceKeyUp(e);
         Closing += RemoteWorkspaceWindow_Closing;
@@ -32,13 +35,18 @@ public partial class RemoteWorkspaceWindow : Window
         if (!SessionTabs.Items.Contains(tab))
         {
             tab.Header = CreateHeader(tab, title, closeRequested);
+            tab.ToolTip = title;
             SessionTabs.Items.Add(tab);
         }
 
         SessionTabs.SelectedItem = tab;
         EmptyState.Visibility = Visibility.Collapsed;
         Show();
-        WindowState = WindowState.Normal;
+        if (WindowState == WindowState.Minimized)
+        {
+            WindowState = WindowState.Normal;
+        }
+
         Activate();
     }
 
@@ -54,9 +62,27 @@ public partial class RemoteWorkspaceWindow : Window
         {
             SessionTabs.SelectedItem = tab;
             Show();
-            WindowState = WindowState.Normal;
+            if (WindowState == WindowState.Minimized)
+            {
+                WindowState = WindowState.Normal;
+            }
+
             Activate();
         }
+    }
+
+    internal sealed class ConnectionStateBrushConverter : System.Windows.Data.IValueConverter
+    {
+        public object Convert(object value, Type targetType, object parameter, CultureInfo culture)
+        {
+            var resource = value is bool connected
+                ? connected ? "Success" : "Error"
+                : "TextSecondary";
+            return (Brush)Application.Current.FindResource(resource);
+        }
+
+        public object ConvertBack(object value, Type targetType, object parameter, CultureInfo culture) =>
+            throw new NotSupportedException();
     }
 
     public void CloseFromManager()
@@ -85,21 +111,47 @@ public partial class RemoteWorkspaceWindow : Window
     private static UIElement CreateHeader(TabItem tab, string title, Action<TabItem> closeRequested)
     {
         var header = new StackPanel { Orientation = Orientation.Horizontal };
+        var status = new Ellipse
+        {
+            Width = 7,
+            Height = 7,
+            Fill = (Brush)Application.Current.FindResource("TextSecondary"),
+            VerticalAlignment = VerticalAlignment.Center,
+            Margin = new Thickness(0, 0, 8, 0),
+        };
+        status.SetBinding(Shape.FillProperty, new System.Windows.Data.Binding("Tag.IsConnected")
+        {
+            Source = tab,
+            Converter = new ConnectionStateBrushConverter(),
+        });
+        header.Children.Add(status);
         header.Children.Add(new TextBlock
         {
             Text = title,
             VerticalAlignment = VerticalAlignment.Center,
-            Margin = new Thickness(0, 0, 10, 0),
+            Margin = new Thickness(0, 0, 7, 0),
+            MaxWidth = 210,
+            TextTrimming = TextTrimming.CharacterEllipsis,
         });
         var close = new Button
         {
-            Content = "×",
-            Padding = new Thickness(5, 0, 5, 1),
-            MinWidth = 22,
+            Content = new Path
+            {
+                Data = (Geometry)Application.Current.FindResource("IconClose"),
+                Width = 11,
+                Height = 11,
+                Fill = (Brush)Application.Current.FindResource("TextSecondary"),
+                Stretch = Stretch.Uniform,
+            },
+            Style = (Style)Application.Current.FindResource("IconButton"),
+            Padding = new Thickness(5),
+            MinWidth = 24,
+            MinHeight = 24,
             Margin = new Thickness(0),
             Tag = tab,
             ToolTip = "Fechar esta sessão",
         };
+        System.Windows.Automation.AutomationProperties.SetName(close, $"Fechar sessão {title}");
         close.Click += (_, _) => closeRequested(tab);
         header.Children.Add(close);
         return header;
@@ -109,7 +161,12 @@ public partial class RemoteWorkspaceWindow : Window
     {
         if (SessionTabs.SelectedItem is TabItem selected)
         {
+            Title = $"LucyVNC — {selected.ToolTip as string ?? "Sessão remota"}";
             _manager.WorkspaceSessionSelected(selected);
+        }
+        else
+        {
+            Title = "LucyVNC — Sessões remotas";
         }
     }
 

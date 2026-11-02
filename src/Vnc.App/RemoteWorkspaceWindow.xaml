@@ -1,21 +1,29 @@
 <Window x:Class="Vnc.App.RemoteWorkspaceWindow"
         xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
         xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
-        Title="LucyVNC — Sessões remotas"
-        Height="900" Width="1440" MinHeight="480" MinWidth="720"
+        Title="LucyVNC — Sessões remotas" Icon="Assets/LucyVNC.ico"
+        Height="610" Width="1180" MinHeight="420" MinWidth="640"
         Background="{StaticResource Canvas}" Foreground="{StaticResource TextPrimary}"
+        FontFamily="Segoe UI Variable" UseLayoutRounding="True" SnapsToDevicePixels="True"
         ShowInTaskbar="True" WindowStartupLocation="CenterOwner">
-    <Grid Margin="12">
-        <TabControl x:Name="SessionTabs" SelectionChanged="SessionTabs_SelectionChanged">
-            <TabControl.ContextMenu>
-                <ContextMenu>
-                    <MenuItem Header="Tela cheia" Click="FullScreen_Click" />
-                </ContextMenu>
-            </TabControl.ContextMenu>
-        </TabControl>
-        <StackPanel x:Name="EmptyState" HorizontalAlignment="Center" VerticalAlignment="Center" IsHitTestVisible="False">
-            <TextBlock Text="Nenhuma sessão remota aberta" FontSize="21" FontWeight="SemiBold" HorizontalAlignment="Center" />
-            <TextBlock Text="Conecte-se pelo LucyVNC Manager para abrir uma aba nesta janela." Foreground="#AAB6C2" Margin="0,8,0,0" />
-        </StackPanel>
+    <Window.ContextMenu>
+        <ContextMenu>
+            <MenuItem Header="Tela cheia" Click="FullScreen_Click" />
+        </ContextMenu>
+    </Window.ContextMenu>
+    <Grid Margin="8">
+        <TabControl x:Name="SessionTabs" SelectionChanged="SessionTabs_SelectionChanged" />
+        <Border x:Name="EmptyState" Style="{StaticResource LucyCard}" Padding="30"
+                HorizontalAlignment="Center" VerticalAlignment="Center" IsHitTestVisible="False">
+            <StackPanel HorizontalAlignment="Center" MaxWidth="420">
+                <Image Source="Assets/LucyVNC-Icon.png" Width="74" Height="74" Stretch="Uniform"
+                       HorizontalAlignment="Center" Margin="0,0,0,14" />
+                <TextBlock Text="Nenhuma sessão remota aberta" FontSize="20" FontWeight="SemiBold"
+                           HorizontalAlignment="Center" />
+                <TextBlock Text="Conecte-se pelo LucyVNC Manager. Cada conexão será aberta em uma aba independente."
+                           Foreground="{StaticResource TextSecondary}" TextWrapping="Wrap" TextAlignment="Center"
+                           Margin="0,8,0,0" />
+            </StackPanel>
+        </Border>
     </Grid>
 </Window>

@@ -19,10 +19,10 @@ internal sealed class CredentialPromptWindow : Window
         Title = "Credenciais VNC";
         Width = 430;
         SizeToContent = SizeToContent.Height;
+        Icon = Application.Current.MainWindow?.Icon;
         WindowStartupLocation = WindowStartupLocation.CenterOwner;
         ResizeMode = ResizeMode.NoResize;
-        Background = new SolidColorBrush(Color.FromRgb(20, 17, 27));
-        Foreground = new SolidColorBrush(Color.FromRgb(242, 237, 248));
+        DarkWindowChrome.Apply(this);
 
         var content = new StackPanel { Margin = new Thickness(24) };
         content.Children.Add(new TextBlock
@@ -36,7 +36,7 @@ internal sealed class CredentialPromptWindow : Window
         {
             Text = message ?? "Informe a senha VNC. O protocolo clássico aceita no máximo oito caracteres.",
             Margin = new Thickness(0, 8, 0, 12),
-            Foreground = new SolidColorBrush(Color.FromRgb(180, 171, 194)),
+            Foreground = (Brush)Application.Current.FindResource("TextSecondary"),
             TextWrapping = TextWrapping.Wrap,
         });
         content.Children.Add(_passwordBox);

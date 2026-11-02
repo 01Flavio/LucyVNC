@@ -17,6 +17,7 @@
     <ProjectReference Include="..\Vnc.Viewer\Vnc.Viewer.csproj" />
     <ProjectReference Include="..\Vnc.Platform.Windows\Vnc.Platform.Windows.csproj" />
     <ProjectReference Include="..\Vnc.Infrastructure\Vnc.Infrastructure.csproj" />
+    <ProjectReference Include="..\Vnc.Service\Vnc.Service.csproj" />
   </ItemGroup>
 
   <ItemGroup>

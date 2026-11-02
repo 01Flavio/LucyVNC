@@ -670,7 +670,7 @@ public partial class MainWindow : Window
 
     private void OpenSessionInWorkspace(ViewerTabState state)
     {
-        if (_workspace is null)
+        if (_workspace is null || !_workspace.CanAcceptSessions)
         {
             _workspace = new RemoteWorkspaceWindow(this) { Owner = this };
         }
@@ -713,14 +713,20 @@ public partial class MainWindow : Window
         });
     }
 
-    private async Task CloseSessionAsync(ViewerTabState state, bool removeTab)
+    private Task CloseSessionAsync(ViewerTabState state, bool removeTab)
     {
-        if (state.IsClosing)
+        if (state.CloseTask is not null)
         {
-            return;
+            return state.CloseTask;
         }
 
         state.IsClosing = true;
+        state.CloseTask = CloseSessionCoreAsync(state, removeTab);
+        return state.CloseTask;
+    }
+
+    private async Task CloseSessionCoreAsync(ViewerTabState state, bool removeTab)
+    {
         state.PointerTimer.Stop();
         state.Cancellation.Cancel();
         var wasConnected = state.Session.IsConnected;
@@ -896,20 +902,24 @@ public partial class MainWindow : Window
             return;
         }
 
-        if (_workspace is not null)
+        if (_workspace is { CanAcceptSessions: true, HasSessions: true })
         {
-            _workspace.Show();
-            if (_workspace.WindowState == WindowState.Minimized)
-            {
-                _workspace.WindowState = WindowState.Normal;
-            }
-
-            _workspace.Activate();
+            _workspace.ActivateWorkspace();
         }
         else
         {
-            _workspace = new RemoteWorkspaceWindow(this) { Owner = this };
-            _workspace.Show();
+            _currentPage = "computers";
+            UpdateNavigationSelection(_currentPage);
+            ComputerPage.Visibility = Visibility.Visible;
+            HistoryPage.Visibility = Visibility.Collapsed;
+            AccessPage.Visibility = Visibility.Collapsed;
+            SettingsPage.Visibility = Visibility.Collapsed;
+            SessionsPage.Visibility = Visibility.Collapsed;
+            PageTitle.Text = "Computadores";
+            PageSubtitle.Text = "Selecione um destino ou conecte-se por IP ou hostname.";
+            SearchContainer.Visibility = Visibility.Visible;
+            _ = RefreshCurrentPageAsync();
+            DirectHostBox.Focus();
         }
     }
 
@@ -1509,6 +1519,7 @@ public partial class MainWindow : Window
         public DateTimeOffset StartedUtc { get; set; }
         public long? HistoryEntryId { get; set; }
         public bool IsClosing { get; set; }
+        public Task? CloseTask { get; set; }
         public bool ViewOnly { get; set; }
         public byte PointerButtons { get; set; }
         public Point LatestPointerPosition { get; set; }

@@ -5,14 +5,18 @@ using System.Windows.Controls;
 using System.Windows.Input;
 using System.Windows.Media;
 using System.Windows.Shapes;
+using System.Windows.Threading;
 
 namespace Vnc.App;
 
 public partial class RemoteWorkspaceWindow : Window
 {
     private readonly MainWindow _manager;
+    private readonly Dictionary<TabItem, RoutedEventHandler> _closeHandlers = new();
     private bool _allowClose;
     private bool _closingInProgress;
+    private bool _emptyClosePending;
+    private bool _isClosed;
     private WindowStyle _previousWindowStyle;
     private WindowState _previousWindowState;
     private bool _isFullScreen;
@@ -22,25 +26,74 @@ public partial class RemoteWorkspaceWindow : Window
         _manager = manager;
         InitializeComponent();
         DarkWindowChrome.Apply(this);
-        PreviewKeyDown += (_, e) => _manager.HandleWorkspaceKeyDown(e);
-        PreviewKeyUp += (_, e) => _manager.HandleWorkspaceKeyUp(e);
+        PreviewKeyDown += Manager_PreviewKeyDown;
+        PreviewKeyUp += Manager_PreviewKeyUp;
         Closing += RemoteWorkspaceWindow_Closing;
-        Closed += (_, _) => _manager.WorkspaceWindowClosed(this);
+        Closed += RemoteWorkspaceWindow_Closed;
     }
 
     public TabControl Tabs => SessionTabs;
+    public bool HasSessions => SessionTabs.Items.Count > 0;
+    public bool CanAcceptSessions => !_allowClose && !_closingInProgress && !_isClosed;
 
     public void AddSession(TabItem tab, string title, Action<TabItem> closeRequested)
     {
+        ObjectDisposedException.ThrowIf(!CanAcceptSessions, this);
+
         if (!SessionTabs.Items.Contains(tab))
         {
-            tab.Header = CreateHeader(tab, title, closeRequested);
+            _emptyClosePending = false;
+            RoutedEventHandler closeHandler = (_, _) => closeRequested(tab);
+            tab.Header = CreateHeader(tab, title, closeHandler);
             tab.ToolTip = title;
+            _closeHandlers.Add(tab, closeHandler);
             SessionTabs.Items.Add(tab);
         }
 
         SessionTabs.SelectedItem = tab;
         EmptyState.Visibility = Visibility.Collapsed;
+        ActivateWorkspace();
+    }
+
+    public void RemoveSession(TabItem tab)
+    {
+        if (!SessionTabs.Items.Contains(tab))
+        {
+            return;
+        }
+
+        SessionTabs.Items.Remove(tab);
+        if (_closeHandlers.Remove(tab, out var closeHandler) &&
+            tab.Header is Panel header &&
+            header.Children.OfType<Button>().FirstOrDefault() is { } closeButton)
+        {
+            closeButton.Click -= closeHandler;
+        }
+
+        var isEmpty = !HasSessions;
+        EmptyState.Visibility = isEmpty ? Visibility.Visible : Visibility.Collapsed;
+        if (isEmpty && !_closingInProgress && !_allowClose && !_isClosed)
+        {
+            QueueCloseWhenEmpty();
+        }
+    }
+
+    public void SelectSession(TabItem tab)
+    {
+        if (CanAcceptSessions && SessionTabs.Items.Contains(tab))
+        {
+            SessionTabs.SelectedItem = tab;
+            ActivateWorkspace();
+        }
+    }
+
+    public void ActivateWorkspace()
+    {
+        if (!CanAcceptSessions || !HasSessions)
+        {
+            return;
+        }
+
         Show();
         if (WindowState == WindowState.Minimized)
         {
@@ -48,27 +101,6 @@ public partial class RemoteWorkspaceWindow : Window
         }
 
         Activate();
-    }
-
-    public void RemoveSession(TabItem tab)
-    {
-        SessionTabs.Items.Remove(tab);
-        EmptyState.Visibility = SessionTabs.Items.Count == 0 ? Visibility.Visible : Visibility.Collapsed;
-    }
-
-    public void SelectSession(TabItem tab)
-    {
-        if (SessionTabs.Items.Contains(tab))
-        {
-            SessionTabs.SelectedItem = tab;
-            Show();
-            if (WindowState == WindowState.Minimized)
-            {
-                WindowState = WindowState.Normal;
-            }
-
-            Activate();
-        }
     }
 
     internal sealed class ConnectionStateBrushConverter : System.Windows.Data.IValueConverter
@@ -87,6 +119,12 @@ public partial class RemoteWorkspaceWindow : Window
 
     public void CloseFromManager()
     {
+        if (_allowClose || _isClosed)
+        {
+            return;
+        }
+
+        _emptyClosePending = false;
         _allowClose = true;
         Close();
     }
@@ -108,7 +146,30 @@ public partial class RemoteWorkspaceWindow : Window
         }
     }
 
-    private static UIElement CreateHeader(TabItem tab, string title, Action<TabItem> closeRequested)
+    private void QueueCloseWhenEmpty()
+    {
+        _emptyClosePending = true;
+        Dispatcher.BeginInvoke(DispatcherPriority.Background, new Action(CloseIfEmpty));
+    }
+
+    private void CloseIfEmpty()
+    {
+        if (!_emptyClosePending)
+        {
+            return;
+        }
+
+        _emptyClosePending = false;
+        if (!CanAcceptSessions || HasSessions)
+        {
+            return;
+        }
+
+        _allowClose = true;
+        Close();
+    }
+
+    private static UIElement CreateHeader(TabItem tab, string title, RoutedEventHandler closeHandler)
     {
         var header = new StackPanel { Orientation = Orientation.Horizontal };
         var status = new Ellipse
@@ -152,7 +213,7 @@ public partial class RemoteWorkspaceWindow : Window
             ToolTip = "Fechar esta sessão",
         };
         System.Windows.Automation.AutomationProperties.SetName(close, $"Fechar sessão {title}");
-        close.Click += (_, _) => closeRequested(tab);
+        close.Click += closeHandler;
         header.Children.Add(close);
         return header;
     }
@@ -172,10 +233,41 @@ public partial class RemoteWorkspaceWindow : Window
 
     private void FullScreen_Click(object sender, RoutedEventArgs e) => ToggleFullScreen();
 
+    private void Manager_PreviewKeyDown(object sender, KeyEventArgs e) => _manager.HandleWorkspaceKeyDown(e);
+
+    private void Manager_PreviewKeyUp(object sender, KeyEventArgs e) => _manager.HandleWorkspaceKeyUp(e);
+
+    private void RemoteWorkspaceWindow_Closed(object? sender, EventArgs e)
+    {
+        _isClosed = true;
+        _emptyClosePending = false;
+        PreviewKeyDown -= Manager_PreviewKeyDown;
+        PreviewKeyUp -= Manager_PreviewKeyUp;
+        Closing -= RemoteWorkspaceWindow_Closing;
+        Closed -= RemoteWorkspaceWindow_Closed;
+        foreach (var (tab, closeHandler) in _closeHandlers)
+        {
+            if (tab.Header is Panel header && header.Children.OfType<Button>().FirstOrDefault() is { } closeButton)
+            {
+                closeButton.Click -= closeHandler;
+            }
+        }
+
+        _closeHandlers.Clear();
+        _manager.WorkspaceWindowClosed(this);
+    }
+
     private void RemoteWorkspaceWindow_Closing(object? sender, CancelEventArgs e)
     {
-        if (_allowClose)
+        if (_allowClose || _isClosed)
         {
+            return;
+        }
+
+        if (!HasSessions)
+        {
+            _emptyClosePending = false;
+            _allowClose = true;
             return;
         }
 
@@ -186,15 +278,22 @@ public partial class RemoteWorkspaceWindow : Window
         }
 
         _closingInProgress = true;
-        _ = ConfirmCloseAsync();
+        Dispatcher.BeginInvoke(
+            DispatcherPriority.Background,
+            new Action(() => _ = ConfirmCloseAsync()));
     }
 
     private async Task ConfirmCloseAsync()
     {
         try
         {
-            if (SessionTabs.Items.Count > 0 &&
-                MessageBox.Show(
+            if (!HasSessions)
+            {
+                CloseFromManager();
+                return;
+            }
+
+            if (MessageBox.Show(
                     this,
                     "Fechar a janela encerrará todas as conexões remotas abertas. Deseja continuar?",
                     "Encerrar sessões remotas",
@@ -204,9 +303,12 @@ public partial class RemoteWorkspaceWindow : Window
                 return;
             }
 
-            await _manager.CloseAllWorkspaceSessionsAsync();
-            _allowClose = true;
-            Close();
+            await Dispatcher.InvokeAsync(
+                    _manager.CloseAllWorkspaceSessionsAsync,
+                    DispatcherPriority.Background)
+                .Task
+                .Unwrap();
+            CloseFromManager();
         }
         catch (Exception exception)
         {
@@ -215,6 +317,10 @@ public partial class RemoteWorkspaceWindow : Window
         finally
         {
             _closingInProgress = false;
+            if (!_allowClose && !HasSessions && !_isClosed)
+            {
+                QueueCloseWhenEmpty();
+            }
         }
     }
 }

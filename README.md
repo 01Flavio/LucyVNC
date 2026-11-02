@@ -37,7 +37,8 @@ src\Vnc.App\bin\Release\net8.0-windows\win-x64\publish\LucyViewer.exe
 3. After successful authentication, LucyVNC records the destination and offers to add an unknown endpoint to the computer list. Existing friendly names are preserved.
 4. Each connection opens an independent tab in the separate **Remote Workspace** window. The window has its own taskbar/Alt+Tab entry; switching tabs leaves each session's RFB receive loop running. The Manager lists open sessions and their status.
 5. Each tab has independent connect/disconnect and view-only state, framebuffer, pointer/key state, scaling and full-screen controls. **Ctrl+Alt+Del** is explicitly shown as unavailable. A disconnected session remains listed and can be reconnected using the password field.
-6. **Acessos** currently exposes the legacy foreground server for the interactive desktop. It is off by default, requires a VNC password on each start, binds to loopback by default, limits connections to one, and does not create firewall rules.
+6. Closing a tab disconnects only that session. The Remote Workspace closes automatically after its last tab is removed and is recreated when another session opens; closing the Workspace directly with tabs open asks for confirmation. The Manager remains open.
+7. **Acessos** currently exposes the legacy foreground server for the interactive desktop. It is off by default, requires a VNC password on each start, binds to loopback by default, limits connections to one, and does not create firewall rules.
 
 The local database is `%LOCALAPPDATA%\LucyVNC\lucy.db`. It stores computers, sort/display preferences, and connection history; it has no password column. Schema migrations are tracked with SQLite `user_version`.
 

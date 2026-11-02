@@ -11,10 +11,12 @@ using System.Windows.Media.Imaging;
 using System.Windows.Shapes;
 using System.Windows.Threading;
 using Microsoft.Data.Sqlite;
+using Microsoft.Win32;
 using Vnc.Core;
 using Vnc.Infrastructure;
 using Vnc.Platform.Windows;
 using Vnc.Server;
+using Vnc.Service;
 using Vnc.Viewer;
 
 namespace Vnc.App;
@@ -22,6 +24,7 @@ namespace Vnc.App;
 public partial class MainWindow : Window
 {
     private readonly LocalComputerStore _store = LocalComputerStore.CreateDefault();
+    private readonly SavedComputerImportExportService _connectionsTransfer;
     private readonly ICredentialVault _credentialVault = new WindowsCredentialVault();
     private readonly Dictionary<Guid, ViewerTabState> _sessions = new();
     private readonly HashSet<string> _connectingEndpoints = new(StringComparer.OrdinalIgnoreCase);
@@ -36,6 +39,7 @@ public partial class MainWindow : Window
 
     public MainWindow()
     {
+        _connectionsTransfer = new SavedComputerImportExportService(_store);
         InitializeComponent();
         DarkWindowChrome.Apply(this);
         UpdateNavigationSelection(_currentPage);
@@ -51,6 +55,7 @@ public partial class MainWindow : Window
         {
             await _store.InitializeAsync();
             _storeReady = true;
+            RefreshServiceStatus();
             DatabaseStatus.Text = "Banco SQLite inicializado; senhas consentidas ficam no Windows Credential Manager.";
             var savedSort = await _store.GetPreferenceAsync("computer-sort");
             var sortItem = SortBox.Items.OfType<ComboBoxItem>().FirstOrDefault(item => Equals(item.Tag, savedSort));
@@ -82,6 +87,10 @@ public partial class MainWindow : Window
         AccessPage.Visibility = page == "access" ? Visibility.Visible : Visibility.Collapsed;
         SettingsPage.Visibility = page == "settings" ? Visibility.Visible : Visibility.Collapsed;
         SessionsPage.Visibility = page == "sessions" ? Visibility.Visible : Visibility.Collapsed;
+        if (page == "access")
+        {
+            RefreshServiceStatus();
+        }
 
         PageTitle.Text = page switch
         {
@@ -130,6 +139,102 @@ public partial class MainWindow : Window
     {
         SearchPlaceholder.Visibility = string.IsNullOrEmpty(SearchBox.Text) ? Visibility.Visible : Visibility.Collapsed;
         await RefreshComputersAsync();
+    }
+
+    private async void ImportConnections_Click(object sender, RoutedEventArgs e)
+    {
+        var picker = ConnectionTransferDialog.CreateImportFileDialog();
+        if (picker.ShowDialog(this) != true)
+        {
+            return;
+        }
+
+        try
+        {
+            var file = new FileInfo(picker.FileName);
+            if (file.Length > 10 * 1024 * 1024)
+            {
+                throw new InvalidDataException("O arquivo de importação excede o limite de 10 MB.");
+            }
+
+            var content = await File.ReadAllTextAsync(picker.FileName);
+            var plan = string.Equals(file.Extension, ".csv", StringComparison.OrdinalIgnoreCase)
+                ? await _connectionsTransfer.PlanCsvImportAsync(content)
+                : await _connectionsTransfer.PlanJsonImportAsync(content);
+            var policy = ConnectionTransferDialog.ShowImportPreview(this, plan);
+            if (policy is null)
+            {
+                return;
+            }
+
+            var report = await _connectionsTransfer.ApplyImportAsync(plan, policy.Value);
+            await RefreshComputersAsync();
+            var rejected = plan.InvalidCount + plan.DuplicateCount;
+            MessageBox.Show(
+                this,
+                $"Importação concluída.\nCriados: {report.Created}\nAtualizados: {report.Updated}\nIgnorados: {report.Ignored}\nRejeitados (inválidos/duplicados): {rejected}",
+                "Resumo da importação",
+                MessageBoxButton.OK,
+                MessageBoxImage.Information);
+        }
+        catch (Exception exception) when (
+            exception is IOException or UnauthorizedAccessException or InvalidDataException or
+                SqliteException or InvalidOperationException or ArgumentException)
+        {
+            MessageBox.Show(this, exception.Message, "Não foi possível importar as conexões", MessageBoxButton.OK, MessageBoxImage.Error);
+        }
+    }
+
+    private async void ExportConnections_Click(object sender, RoutedEventArgs e)
+    {
+        var selectedComputers = ComputerGrid.SelectedItems.OfType<SavedComputer>().ToArray();
+        var options = ConnectionTransferDialog.ShowExportOptions(this, selectedComputers.Length);
+        if (options is null)
+        {
+            return;
+        }
+
+        var picker = ConnectionTransferDialog.CreateExportFileDialog(options.Format);
+        if (picker.ShowDialog(this) != true)
+        {
+            return;
+        }
+
+        try
+        {
+            var contentTask = (options.Scope, options.Format) switch
+            {
+                (ConnectionExportScope.Selected, ConnectionExportFormat.Json) =>
+                    _connectionsTransfer.ExportSelectedJsonAsync(selectedComputers.Select(computer => computer.Id)),
+                (ConnectionExportScope.Selected, ConnectionExportFormat.Csv) =>
+                    _connectionsTransfer.ExportSelectedCsvAsync(selectedComputers.Select(computer => computer.Id)),
+                (ConnectionExportScope.Favorites, ConnectionExportFormat.Json) =>
+                    _connectionsTransfer.ExportFavoritesJsonAsync(),
+                (ConnectionExportScope.Favorites, ConnectionExportFormat.Csv) =>
+                    _connectionsTransfer.ExportFavoritesCsvAsync(),
+                (_, ConnectionExportFormat.Json) => _connectionsTransfer.ExportAllJsonAsync(),
+                _ => _connectionsTransfer.ExportAllCsvAsync(),
+            };
+            var content = await contentTask;
+            await File.WriteAllTextAsync(picker.FileName, content);
+            var exportedCount = options.Scope switch
+            {
+                ConnectionExportScope.Selected => selectedComputers.Length,
+                ConnectionExportScope.Favorites => (await _store.GetComputersAsync(favoritesOnly: true)).Count,
+                _ => (await _store.GetComputersAsync()).Count,
+            };
+            MessageBox.Show(
+                this,
+                $"Exportadas {exportedCount} conexão(ões).\nO arquivo não contém senhas nem credenciais.",
+                "Exportação concluída",
+                MessageBoxButton.OK,
+                MessageBoxImage.Information);
+        }
+        catch (Exception exception) when (
+            exception is IOException or UnauthorizedAccessException or SqliteException or InvalidOperationException)
+        {
+            MessageBox.Show(this, exception.Message, "Não foi possível exportar as conexões", MessageBoxButton.OK, MessageBoxImage.Error);
+        }
     }
 
     private void DirectHostBox_TextChanged(object sender, TextChangedEventArgs e) =>
@@ -1341,6 +1446,11 @@ public partial class MainWindow : Window
         {
             ServerPasswordBox.Clear();
         }
+    }
+
+    private void RefreshServiceStatus()
+    {
+        ServiceStatus.Text = WindowsServiceStatusProbe.GetDiagnostic();
     }
 
     private async void StopServer_Click(object sender, RoutedEventArgs e)

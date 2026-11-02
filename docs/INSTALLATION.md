@@ -1,8 +1,8 @@
 # Installation and operation
 
-## Current development build
+## LucyVNC Viewer
 
-LucyVNC currently publishes the WPF Viewer only. There is no product installer and no install/remove script for a Windows Service in this build.
+The self-contained WPF application is published separately from the optional LucyServer Worker Service. There is no product installer.
 
 From a Windows PowerShell prompt at the solution root:
 
@@ -13,6 +13,8 @@ Start-Process ".\src\Vnc.App\bin\Release\net8.0-windows\win-x64\publish\LucyView
 ```
 
 Publishing does not install a service, configure startup, or create Windows Firewall rules. Remove the published directory to remove this development build.
+
+Connection settings can be transferred from **Importar conexões** / **Exportar conexões** in the Manager. The files are configuration-only and contain no VNC passwords or Credential Manager data. The version-1 JSON shape and CSV columns are documented in the root [README](../README.md#connection-transfer-files).
 
 ## Outgoing Viewer connections
 
@@ -29,6 +31,24 @@ The **Acessos** page operates the existing foreground Server in the logged-in in
 
 Do not expose classic VNC directly to an untrusted network. The protocol does not encrypt framebuffer or input traffic. Use loopback or a trusted VPN/tunnel and configure any firewall rule manually and narrowly. LucyVNC does not make firewall changes.
 
-## Future Windows Service deployment
+## LucyServer Windows Service groundwork
 
-Service deployment is intentionally unavailable until the service/agent boundary is implemented and tested. Do not register `LucyViewer.exe` as a service: WPF, screen capture, and `SendInput` require the user's interactive session, while a Windows Service normally runs in Session 0. A future installer must separately install the service and Viewer, use a user-visible interactive agent, authenticate and ACL its local IPC, and require explicit consent before enabling remote control.
+The .NET Worker Service executable and administrator scripts are included, but the service deliberately refuses all remote sharing because there is no interactive-session agent or authenticated IPC. Installing or starting it does not create a VNC endpoint and does not replace the foreground Server. The Manager displays Service Control Manager status; service installation and control are currently manual.
+
+If you explicitly need to validate only the worker's SCM lifecycle, publish the executable:
+
+```powershell
+dotnet publish "src/Vnc.Service/Vnc.Service.csproj" -c Release -r win-x64 --self-contained true
+```
+
+In an elevated PowerShell session, use the scripts below. Installation is Automatic but leaves the service stopped; start is a separate action. Status reports `RemoteSharingAvailable = false`. Stop and uninstall ask for confirmation. None of the scripts creates or edits firewall rules.
+
+```powershell
+.\scripts\Install-LucyServerService.ps1
+.\scripts\Get-LucyServerServiceStatus.ps1
+.\scripts\Start-LucyServerService.ps1
+.\scripts\Stop-LucyServerService.ps1
+.\scripts\Uninstall-LucyServerService.ps1
+```
+
+Do not register `LucyViewer.exe` as a service: WPF, screen capture, and `SendInput` require the user's interactive session, while a Windows Service normally runs in Session 0. A production LucyServer still needs a user-visible session agent, authenticated and ACL-restricted IPC, service-side VNC listener/authentication, login/logout/session-switch handling, and explicit consent before enabling remote control. Session 0 provides no supported access to the signed-in desktop; secure desktop, UAC, and pre-login control are not implemented.

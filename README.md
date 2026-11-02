@@ -11,6 +11,7 @@ LucyVNC is a Windows VNC Viewer and foreground Server built around a shared RFB 
 - `src/Vnc.Server` — authenticated RFB server library
 - `src/Vnc.Viewer` — RFB Viewer client
 - `src/Vnc.Infrastructure` — versioned SQLite schema, computer records, preferences, and history
+- `src/Vnc.Service` — Windows Service host and safe configuration/status groundwork for LucyServer
 - `tests/*` — protocol, server, Viewer, integration, and SQLite tests
 
 ## Build, test, and publish
@@ -38,14 +39,40 @@ src\Vnc.App\bin\Release\net8.0-windows\win-x64\publish\LucyViewer.exe
 4. Each connection opens an independent tab in the separate **Remote Workspace** window. The window has its own taskbar/Alt+Tab entry; switching tabs leaves each session's RFB receive loop running. The Manager lists open sessions and their status.
 5. Each tab has independent connect/disconnect and view-only state, framebuffer, pointer/key state, scaling and full-screen controls. **Ctrl+Alt+Del** is explicitly shown as unavailable. A disconnected session remains listed and can be reconnected using the password field.
 6. Closing a tab disconnects only that session. The Remote Workspace closes automatically after its last tab is removed and is recreated when another session opens; closing the Workspace directly with tabs open asks for confirmation. The Manager remains open.
-7. **Acessos** currently exposes the legacy foreground server for the interactive desktop. It is off by default, requires a VNC password on each start, binds to loopback by default, limits connections to one, and does not create firewall rules.
+7. **Acessos** exposes the legacy foreground server for the interactive desktop. It is off by default, requires a VNC password on each start, binds to loopback by default, limits connections to one, and does not create firewall rules.
+8. Use **Importar conexões** and **Exportar conexões** to transfer non-secret computer settings in JSON or CSV. Import is previewed before applying; endpoint conflicts default to ignore. Export supports all entries, the extended-selection set, or favorites.
 
 The local database is `%LOCALAPPDATA%\LucyVNC\lucy.db`. It stores computers, sort/display preferences, and connection history; it has no password column. Schema migrations are tracked with SQLite `user_version`.
+
+## Connection transfer files
+
+The native JSON format is versioned and contains only portable, non-secret connection settings:
+
+```json
+{
+  "schemaVersion": 1,
+  "computers": [
+    {
+      "name": "Notebook",
+      "hostname": "notebook.example.local",
+      "ipAddress": "192.168.15.13",
+      "port": 5900,
+      "group": "Office",
+      "isFavorite": true,
+      "viewPreference": "fit"
+    }
+  ]
+}
+```
+
+`hostname` and `ipAddress` are each optional, but at least one must be present. `group` is optional; `viewPreference` is `fit` or `100%`. CSV uses the header `name,hostname,ipAddress,port,group,isFavorite,viewPreference`; `name` and `port` are required, and `isFavorite` accepts `true`/`false` (empty means false). Both formats support quoted CSV fields and validate host, port, name, and view preference before import. Same normalized hostname/IP and port within an import file are marked duplicate; aliases matching existing entries are conflicts. Import choices are ignore, update, or create. Updates preserve local favorite state, history, and Credential Manager reference; imports never write or replace credentials. JSON is capped at 10 MB by the Manager. Export deliberately excludes database IDs, connection history, and all credential/secret data. To migrate a computer, transfer this file and enter or explicitly remember its VNC password again on the destination Windows account.
 
 ## Security and implementation status
 
 - The RFB server requires classic VNC Authentication and restricts binds to loopback or permitted private/VPN/link-local ranges. VNC Authentication does **not** encrypt traffic and only provides an effective eight-character ASCII password.
-- The legacy server runs in the current interactive process; it is not a Windows Service. The `LucyServer` Worker Service, interactive `LucySessionAgent`, authenticated/restricted IPC, service installation/removal scripts, and product installer have **not** been implemented in this build. No service is installed or started automatically.
+- The legacy VNC server runs in the current interactive process. The `Vnc.Service` Worker Service host, safe configuration store, SCM status diagnostic, and opt-in install/start/stop/uninstall scripts are present, but it deliberately does **not** open a VNC listener. It refuses sharing because the interactive-session agent and authenticated, ACL-restricted IPC are not implemented. Installing or starting this worker therefore does not provide remote desktop sharing. No service is installed or started automatically, and the scripts do not change the firewall.
+- Service configuration defaults to sharing disabled, loopback bind, required authentication, port 5900, and a one-session limit. The configuration file is stored under `%ProgramData%\LucyVNC\Service` with access restricted to SYSTEM and Administrators; it contains no password. A requested non-loopback bind must be an explicit private/VPN/link-local IP. This configuration is not yet a usable VNC server setting because there is no session agent.
+- From an elevated PowerShell prompt, the optional scripts are `scripts\Install-LucyServerService.ps1`, `scripts\Start-LucyServerService.ps1`, `scripts\Stop-LucyServerService.ps1`, `scripts\Get-LucyServerServiceStatus.ps1`, and `scripts\Uninstall-LucyServerService.ps1`. Publish `src\Vnc.Service\Vnc.Service.csproj` for `win-x64` before installing. Installation is Automatic but leaves the service stopped and configures bounded SCM recovery; it does not install or activate sharing. These scripts have not been run as part of ordinary build/test validation.
 - Session 0 capture/input, secure desktop, UAC bypass, unattended control, automatic firewall changes, TLS/VeNCrypt, Tight encoding, clipboard, and multi-monitor capture are not supported.
 - Real Windows desktop input validation remains a separate opt-in check: `dotnet run --project "tests/Vnc.InteractiveProbe/Vnc.InteractiveProbe.csproj" -c Release`.
 - Moving/detaching a single session tab into another independent workspace window is not implemented. Sessions can be moved between monitors by moving the whole Remote Workspace window.

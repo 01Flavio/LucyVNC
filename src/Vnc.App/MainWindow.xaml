@@ -197,6 +197,8 @@
                             <Button Content="Favorito" Style="{StaticResource CompactButton}" Click="ToggleFavorite_Click" />
                             <Button Content="Duplicar" Style="{StaticResource CompactButton}" Click="DuplicateComputer_Click" />
                             <Button Content="Excluir" Style="{StaticResource CompactButton}" Click="DeleteComputer_Click" />
+                            <Button Content="Importar conexões" Style="{StaticResource CompactButton}" Click="ImportConnections_Click" />
+                            <Button Content="Exportar conexões" Style="{StaticResource CompactButton}" Click="ExportConnections_Click" />
                             <ComboBox x:Name="SortBox" Width="142" Margin="2,2,0,2" ToolTip="Ordenar computadores"
                                       SelectionChanged="SortBox_SelectionChanged">
                                 <ComboBoxItem Content="Nome" Tag="name" IsSelected="True" />
@@ -205,7 +207,7 @@
                             </ComboBox>
                         </WrapPanel>
                         <Grid Grid.Row="2">
-                            <ListBox x:Name="ComputerGrid" SelectionChanged="ComputerGrid_SelectionChanged"
+                            <ListBox x:Name="ComputerGrid" SelectionMode="Extended" SelectionChanged="ComputerGrid_SelectionChanged"
                                      MouseDoubleClick="ConnectSelected_Click" KeyboardNavigation.TabNavigation="Continue">
                                 <ListBox.ItemTemplate>
                                     <DataTemplate>
@@ -358,13 +360,13 @@
                     <Border Grid.Column="1" Style="{StaticResource LucyCard}" Padding="20">
                         <StackPanel>
                             <TextBlock Text="LucyServer Windows Service" FontSize="18" FontWeight="SemiBold" Foreground="{StaticResource Accent}" />
-                            <TextBlock x:Name="ServiceStatus" Text="Não instalado / não iniciado. Nenhum serviço ou regra de firewall foi alterado."
+                            <TextBlock x:Name="ServiceStatus" Text="Consultando o Service Control Manager..."
                                        Margin="0,10,0,0" TextWrapping="Wrap" />
-                            <TextBlock Text="O acesso recebido abaixo é um modo em primeiro plano nesta sessão interativa. A execução como serviço com agente de sessão e IPC restrito ainda não está ativada nesta build. Não instale nem inicie serviços durante o desenvolvimento."
+                            <TextBlock Text="Este host de serviço não abre um listener: o serviço recusa compartilhamento até existir um agente interativo real com IPC autenticado e restrito. A sessão 0 nunca captura a tela nem injeta entrada; logon, desktop seguro e sessões não interativas não são suportados."
                                        Foreground="{StaticResource Warning}" Margin="0,18,0,0" TextWrapping="Wrap" />
-                            <TextBlock Text="VNC Authentication não cifra a sessão. O bind deve ser loopback ou um IP privado/VPN autorizado; LucyVNC não cria regras de firewall."
+                            <TextBlock Text="Compartilhamento remoto permanece desabilitado por padrão. A configuração persistente não contém senha; autenticação é obrigatória, o limite futuro é uma sessão e não há alterações de firewall."
                                        Foreground="{StaticResource TextSecondary}" Margin="0,18,0,0" TextWrapping="Wrap" />
-                            <TextBlock Text="Histórico de sessões recebidas com origem e duração depende do serviço de produção."
+                            <TextBlock Text="O serviço não fornece controles de instalação/inicialização nesta tela. O compartilhamento em primeiro plano à esquerda continua independente."
                                        Foreground="{StaticResource TextSecondary}" Margin="0,18,0,0" TextWrapping="Wrap" />
                         </StackPanel>
                     </Border>

@@ -202,6 +202,77 @@ public sealed class LocalComputerStore
         await command.ExecuteNonQueryAsync(cancellationToken);
     }
 
+    internal async Task ApplyComputerImportAsync(
+        IReadOnlyCollection<SavedComputer> creates,
+        IReadOnlyCollection<SavedComputer> updates,
+        CancellationToken cancellationToken = default)
+    {
+        ArgumentNullException.ThrowIfNull(creates);
+        ArgumentNullException.ThrowIfNull(updates);
+        foreach (var computer in creates.Concat(updates))
+        {
+            ValidateComputer(computer);
+            if (computer.CredentialTarget is not null)
+            {
+                throw new ArgumentException("Imports cannot set credential references.", nameof(creates));
+            }
+        }
+
+        if (creates.Select(item => item.Id).Intersect(updates.Select(item => item.Id)).Any() ||
+            creates.Select(item => item.Id).Distinct().Count() != creates.Count ||
+            updates.Select(item => item.Id).Distinct().Count() != updates.Count)
+        {
+            throw new ArgumentException("Imported computer identifiers must be unique.");
+        }
+
+        await using var connection = await OpenAsync(cancellationToken);
+        await using var transaction = connection.BeginTransaction();
+        var now = DateTimeOffset.UtcNow.ToString("O");
+
+        foreach (var computer in creates)
+        {
+            await using var command = connection.CreateCommand();
+            command.Transaction = transaction;
+            command.CommandText = """
+                INSERT INTO computers (
+                    id, name, hostname, ip_address, port, group_name, is_favorite,
+                    last_connected_utc, last_result, view_preference, credential_target,
+                    created_utc, updated_utc)
+                VALUES ($id, $name, $hostname, $ip, $port, $group, $favorite,
+                    NULL, NULL, $view, NULL, $now, $now);
+                """;
+            AddComputerParameters(command, computer);
+            command.Parameters.AddWithValue("$now", now);
+            await command.ExecuteNonQueryAsync(cancellationToken);
+        }
+
+        foreach (var computer in updates)
+        {
+            await using var command = connection.CreateCommand();
+            command.Transaction = transaction;
+            command.CommandText = """
+                UPDATE computers
+                SET name = $name, hostname = $hostname, ip_address = $ip, port = $port,
+                    group_name = $group, view_preference = $view, updated_utc = $now
+                WHERE id = $id;
+                """;
+            AddComputerParameters(command, computer with
+            {
+                IsFavorite = false,
+                LastConnectedUtc = null,
+                LastResult = null,
+                CredentialTarget = null,
+            });
+            command.Parameters.AddWithValue("$now", now);
+            if (await command.ExecuteNonQueryAsync(cancellationToken) != 1)
+            {
+                throw new InvalidOperationException($"Computer {computer.Id} changed after the import plan was created.");
+            }
+        }
+
+        await transaction.CommitAsync(cancellationToken);
+    }
+
     public async Task DeleteComputerAsync(Guid id, CancellationToken cancellationToken = default)
     {
         await using var connection = await OpenAsync(cancellationToken);

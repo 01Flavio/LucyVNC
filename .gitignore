@@ -1,0 +1,28 @@
+# .NET
+bin/
+obj/
+.vs/
+TestResults/
+artifacts/
+
+# IDE
+.vscode/
+.idea/
+
+# Dados locais
+*.db
+*.db-shm
+*.db-wal
+*.sqlite
+*.sqlite3
+*.log
+
+# Segredos
+.env
+.env.*
+appsettings.Development.json
+*.pfx
+*.key
+
+# Publicações
+publish/

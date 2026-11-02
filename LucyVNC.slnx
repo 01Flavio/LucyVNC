@@ -1,0 +1,16 @@
+<Solution>
+  <Project Path="src/Vnc.Core/Vnc.Core.csproj" />
+  <Project Path="src/Vnc.Protocol/Vnc.Protocol.csproj" />
+  <Project Path="src/Vnc.Platform.Windows/Vnc.Platform.Windows.csproj" />
+  <Project Path="src/Vnc.Server/Vnc.Server.csproj" />
+  <Project Path="src/Vnc.Viewer/Vnc.Viewer.csproj" />
+  <Project Path="src/Vnc.Infrastructure/Vnc.Infrastructure.csproj" />
+  <Project Path="src/Vnc.App/Vnc.App.csproj" />
+  <Project Path="tests/Vnc.Protocol.Tests/Vnc.Protocol.Tests.csproj" />
+  <Project Path="tests/Vnc.Viewer.Tests/Vnc.Viewer.Tests.csproj" />
+  <Project Path="tests/Vnc.Server.Tests/Vnc.Server.Tests.csproj" />
+  <Project Path="tests/Vnc.Integration.Tests/Vnc.Integration.Tests.csproj" />
+  <Project Path="tests/Vnc.Infrastructure.Tests/Vnc.Infrastructure.Tests.csproj" />
+  <Project Path="tests/Vnc.ProcessHost/Vnc.ProcessHost.csproj" />
+  <Project Path="tests/Vnc.InteractiveProbe/Vnc.InteractiveProbe.csproj" />
+</Solution>

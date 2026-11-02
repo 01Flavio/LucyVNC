@@ -1,0 +1,129 @@
+<ResourceDictionary xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+                    xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml">
+    <BooleanToVisibilityConverter x:Key="BoolToVisibility" />
+    <SolidColorBrush x:Key="Canvas" Color="#100D14" />
+    <SolidColorBrush x:Key="Surface" Color="#1C1723" />
+    <SolidColorBrush x:Key="Raised" Color="#282132" />
+    <SolidColorBrush x:Key="Line" Color="#3A2D48" />
+    <SolidColorBrush x:Key="Accent" Color="#B56BFF" />
+    <SolidColorBrush x:Key="AccentMuted" Color="#765095" />
+    <SolidColorBrush x:Key="TextPrimary" Color="#F3EDF8" />
+    <SolidColorBrush x:Key="TextSecondary" Color="#B8ACBF" />
+
+    <Style TargetType="TextBlock">
+        <Setter Property="Foreground" Value="{StaticResource TextPrimary}" />
+    </Style>
+    <Style TargetType="TextBox">
+        <Setter Property="Background" Value="#15111B" />
+        <Setter Property="Foreground" Value="{StaticResource TextPrimary}" />
+        <Setter Property="BorderBrush" Value="{StaticResource Line}" />
+        <Setter Property="CaretBrush" Value="{StaticResource Accent}" />
+        <Setter Property="Padding" Value="9,7" />
+        <Setter Property="Margin" Value="0,4,0,9" />
+    </Style>
+    <Style TargetType="PasswordBox">
+        <Setter Property="Background" Value="#15111B" />
+        <Setter Property="Foreground" Value="{StaticResource TextPrimary}" />
+        <Setter Property="BorderBrush" Value="{StaticResource Line}" />
+        <Setter Property="Padding" Value="9,7" />
+        <Setter Property="Margin" Value="0,4,0,9" />
+    </Style>
+    <Style TargetType="Button">
+        <Setter Property="Background" Value="#352644" />
+        <Setter Property="Foreground" Value="{StaticResource TextPrimary}" />
+        <Setter Property="BorderBrush" Value="{StaticResource AccentMuted}" />
+        <Setter Property="Padding" Value="12,7" />
+        <Setter Property="Margin" Value="0,3,7,3" />
+        <Setter Property="MinWidth" Value="92" />
+        <Setter Property="Cursor" Value="Hand" />
+        <Setter Property="Template">
+            <Setter.Value>
+                <ControlTemplate TargetType="Button">
+                    <Border x:Name="ButtonBorder" Background="{TemplateBinding Background}"
+                            BorderBrush="{TemplateBinding BorderBrush}" BorderThickness="1" CornerRadius="6"
+                            Padding="{TemplateBinding Padding}">
+                        <ContentPresenter HorizontalAlignment="{TemplateBinding HorizontalContentAlignment}"
+                                          VerticalAlignment="{TemplateBinding VerticalContentAlignment}"
+                                          RecognizesAccessKey="True" />
+                    </Border>
+                    <ControlTemplate.Triggers>
+                        <Trigger Property="IsMouseOver" Value="True">
+                            <Setter TargetName="ButtonBorder" Property="Background" Value="#49305F" />
+                            <Setter TargetName="ButtonBorder" Property="BorderBrush" Value="{StaticResource Accent}" />
+                        </Trigger>
+                        <Trigger Property="IsPressed" Value="True">
+                            <Setter TargetName="ButtonBorder" Property="Background" Value="#24192E" />
+                        </Trigger>
+                        <Trigger Property="IsEnabled" Value="False">
+                            <Setter TargetName="ButtonBorder" Property="Opacity" Value="0.45" />
+                        </Trigger>
+                    </ControlTemplate.Triggers>
+                </ControlTemplate>
+            </Setter.Value>
+        </Setter>
+    </Style>
+    <Style TargetType="ComboBox">
+        <Setter Property="Background" Value="#15111B" />
+        <Setter Property="Foreground" Value="{StaticResource TextPrimary}" />
+        <Setter Property="BorderBrush" Value="{StaticResource Line}" />
+    </Style>
+    <Style TargetType="DataGrid">
+        <Setter Property="Background" Value="{StaticResource Canvas}" />
+        <Setter Property="Foreground" Value="{StaticResource TextPrimary}" />
+        <Setter Property="RowBackground" Value="{StaticResource Surface}" />
+        <Setter Property="AlternatingRowBackground" Value="#221C2B" />
+        <Setter Property="GridLinesVisibility" Value="Horizontal" />
+        <Setter Property="HorizontalGridLinesBrush" Value="{StaticResource Line}" />
+        <Setter Property="BorderBrush" Value="{StaticResource Line}" />
+        <Setter Property="HeadersVisibility" Value="Column" />
+        <Setter Property="AutoGenerateColumns" Value="False" />
+        <Setter Property="CanUserAddRows" Value="False" />
+        <Setter Property="SelectionMode" Value="Single" />
+        <Setter Property="IsReadOnly" Value="True" />
+    </Style>
+    <Style TargetType="DataGridColumnHeader">
+        <Setter Property="Background" Value="#241C2D" />
+        <Setter Property="Foreground" Value="{StaticResource TextSecondary}" />
+        <Setter Property="BorderBrush" Value="{StaticResource Line}" />
+        <Setter Property="Padding" Value="9,8" />
+    </Style>
+    <Style TargetType="ListBox">
+        <Setter Property="Background" Value="Transparent" />
+        <Setter Property="BorderThickness" Value="0" />
+        <Setter Property="ScrollViewer.HorizontalScrollBarVisibility" Value="Disabled" />
+    </Style>
+    <Style TargetType="ListBoxItem">
+        <Setter Property="Padding" Value="0" />
+        <Setter Property="Margin" Value="0,0,0,10" />
+        <Setter Property="HorizontalContentAlignment" Value="Stretch" />
+        <Setter Property="Background" Value="Transparent" />
+        <Setter Property="Template">
+            <Setter.Value>
+                <ControlTemplate TargetType="ListBoxItem">
+                    <Border x:Name="ItemBorder" Background="Transparent" BorderBrush="Transparent"
+                            BorderThickness="1" CornerRadius="9">
+                        <ContentPresenter />
+                    </Border>
+                    <ControlTemplate.Triggers>
+                        <Trigger Property="IsSelected" Value="True">
+                            <Setter TargetName="ItemBorder" Property="Background" Value="#2A2034" />
+                            <Setter TargetName="ItemBorder" Property="BorderBrush" Value="{StaticResource AccentMuted}" />
+                        </Trigger>
+                        <Trigger Property="IsMouseOver" Value="True">
+                            <Setter TargetName="ItemBorder" Property="BorderBrush" Value="{StaticResource AccentMuted}" />
+                        </Trigger>
+                    </ControlTemplate.Triggers>
+                </ControlTemplate>
+            </Setter.Value>
+        </Setter>
+    </Style>
+    <Style TargetType="TabControl">
+        <Setter Property="Background" Value="{StaticResource Canvas}" />
+        <Setter Property="BorderBrush" Value="{StaticResource Line}" />
+    </Style>
+    <Style TargetType="TabItem">
+        <Setter Property="Foreground" Value="{StaticResource TextPrimary}" />
+        <Setter Property="Background" Value="{StaticResource Surface}" />
+        <Setter Property="Padding" Value="10,7" />
+    </Style>
+</ResourceDictionary>

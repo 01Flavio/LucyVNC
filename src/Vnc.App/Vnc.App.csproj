@@ -1,0 +1,21 @@
+﻿<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <OutputType>WinExe</OutputType>
+    <AssemblyName>LucyViewer</AssemblyName>
+    <TargetFramework>net8.0-windows</TargetFramework>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <UseWPF>true</UseWPF>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\Vnc.Core\Vnc.Core.csproj" />
+    <ProjectReference Include="..\Vnc.Protocol\Vnc.Protocol.csproj" />
+    <ProjectReference Include="..\Vnc.Server\Vnc.Server.csproj" />
+    <ProjectReference Include="..\Vnc.Viewer\Vnc.Viewer.csproj" />
+    <ProjectReference Include="..\Vnc.Platform.Windows\Vnc.Platform.Windows.csproj" />
+    <ProjectReference Include="..\Vnc.Infrastructure\Vnc.Infrastructure.csproj" />
+  </ItemGroup>
+
+</Project>

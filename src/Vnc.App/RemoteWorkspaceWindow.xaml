@@ -1,0 +1,21 @@
+<Window x:Class="Vnc.App.RemoteWorkspaceWindow"
+        xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        Title="LucyVNC — Sessões remotas"
+        Height="900" Width="1440" MinHeight="480" MinWidth="720"
+        Background="{StaticResource Canvas}" Foreground="{StaticResource TextPrimary}"
+        ShowInTaskbar="True" WindowStartupLocation="CenterOwner">
+    <Grid Margin="12">
+        <TabControl x:Name="SessionTabs" SelectionChanged="SessionTabs_SelectionChanged">
+            <TabControl.ContextMenu>
+                <ContextMenu>
+                    <MenuItem Header="Tela cheia" Click="FullScreen_Click" />
+                </ContextMenu>
+            </TabControl.ContextMenu>
+        </TabControl>
+        <StackPanel x:Name="EmptyState" HorizontalAlignment="Center" VerticalAlignment="Center" IsHitTestVisible="False">
+            <TextBlock Text="Nenhuma sessão remota aberta" FontSize="21" FontWeight="SemiBold" HorizontalAlignment="Center" />
+            <TextBlock Text="Conecte-se pelo LucyVNC Manager para abrir uma aba nesta janela." Foreground="#AAB6C2" Margin="0,8,0,0" />
+        </StackPanel>
+    </Grid>
+</Window>

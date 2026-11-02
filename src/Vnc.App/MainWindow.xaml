@@ -1,0 +1,233 @@
+<Window x:Class="Vnc.App.MainWindow"
+        xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        Title="LucyVNC Manager" Height="860" Width="1440" MinHeight="680" MinWidth="1100"
+        Background="{StaticResource Canvas}" Foreground="{StaticResource TextPrimary}">
+    <Grid>
+        <Grid.ColumnDefinitions>
+            <ColumnDefinition Width="218" />
+            <ColumnDefinition Width="*" />
+        </Grid.ColumnDefinitions>
+        <Border Grid.Column="0" Background="{StaticResource Surface}" BorderBrush="{StaticResource Line}" BorderThickness="0,0,1,0">
+            <DockPanel Margin="16">
+                <StackPanel DockPanel.Dock="Top">
+                    <TextBlock Text="LucyVNC" FontSize="25" FontWeight="SemiBold" Margin="4,4,0,4" />
+                    <TextBlock Text="REMOTE WORKSPACE" FontSize="10" Foreground="{StaticResource TextSecondary}" Margin="5,0,0,24" />
+                    <Button Content="Computadores" Tag="computers" Click="Navigate_Click" HorizontalContentAlignment="Left" />
+                    <Button Content="Recentes" Tag="recent" Click="Navigate_Click" HorizontalContentAlignment="Left" />
+                    <Button Content="Favoritos" Tag="favorites" Click="Navigate_Click" HorizontalContentAlignment="Left" />
+                    <Button Content="Acessos" Tag="access" Click="Navigate_Click" HorizontalContentAlignment="Left" />
+                    <Button Content="Configurações" Tag="settings" Click="Navigate_Click" HorizontalContentAlignment="Left" />
+                    <Button Content="Sessões abertas" Tag="sessions" Click="Navigate_Click" HorizontalContentAlignment="Left" />
+                </StackPanel>
+                <Border DockPanel.Dock="Bottom" Background="{StaticResource Raised}" CornerRadius="7" Padding="10" Margin="0,14,0,0">
+                    <StackPanel>
+                        <TextBlock Text="SEGURANÇA" FontSize="10" Foreground="{StaticResource Accent}" FontWeight="SemiBold" />
+                        <TextBlock Text="VNC clássico não cifra o tráfego. Prefira loopback ou VPN confiável." FontSize="11" Foreground="{StaticResource TextSecondary}" TextWrapping="Wrap" Margin="0,5,0,0" />
+                    </StackPanel>
+                </Border>
+            </DockPanel>
+        </Border>
+
+        <Grid Grid.Column="1" Margin="24,18,24,20">
+            <Grid.RowDefinitions>
+                <RowDefinition Height="Auto" />
+                <RowDefinition Height="*" />
+            </Grid.RowDefinitions>
+            <DockPanel Grid.Row="0" Margin="0,0,0,16">
+                <StackPanel DockPanel.Dock="Left">
+                    <TextBlock x:Name="PageTitle" Text="Computadores" FontSize="25" FontWeight="SemiBold" />
+                    <TextBlock x:Name="PageSubtitle" Text="Gerencie destinos e abra sessões independentes." Foreground="{StaticResource TextSecondary}" Margin="0,3,0,0" />
+                </StackPanel>
+                <StackPanel DockPanel.Dock="Right" Orientation="Horizontal" VerticalAlignment="Center">
+                    <TextBox x:Name="DirectHostBox" Width="190" Margin="0,0,8,0" ToolTip="Conectar por IP ou hostname" />
+                    <TextBox x:Name="DirectPortBox" Width="72" Text="5900" Margin="0,0,8,0" ToolTip="Porta TCP" />
+                    <Button Content="Conectar destino..." Click="ConnectAddress_Click" />
+                </StackPanel>
+            </DockPanel>
+
+            <Grid Grid.Row="1">
+                <Grid x:Name="ComputerPage" Visibility="Visible">
+                    <Grid.ColumnDefinitions>
+                        <ColumnDefinition Width="*" />
+                        <ColumnDefinition Width="300" />
+                    </Grid.ColumnDefinitions>
+                    <Grid Margin="0,0,16,0">
+                        <Grid.RowDefinitions>
+                            <RowDefinition Height="Auto" />
+                            <RowDefinition Height="Auto" />
+                            <RowDefinition Height="*" />
+                        </Grid.RowDefinitions>
+                        <StackPanel Grid.Row="0" Orientation="Horizontal" Margin="0,0,0,10">
+                            <Button Content="Conectar" Click="ConnectSelected_Click" />
+                            <Button Content="Novo" Click="NewComputer_Click" />
+                            <Button Content="Duplicar" Click="DuplicateComputer_Click" />
+                            <Button Content="Favorito" Click="ToggleFavorite_Click" />
+                            <Button Content="Excluir" Click="DeleteComputer_Click" />
+                            <ComboBox x:Name="SortBox" Width="160" Height="32" Margin="4,3,0,3" SelectionChanged="SortBox_SelectionChanged">
+                                <ComboBoxItem Content="Nome" Tag="name" IsSelected="True" />
+                                <ComboBoxItem Content="Última conexão" Tag="recent" />
+                                <ComboBoxItem Content="Grupo" Tag="group" />
+                            </ComboBox>
+                        </StackPanel>
+                        <Grid Grid.Row="1" Margin="0,0,0,2">
+                            <Grid.ColumnDefinitions>
+                                <ColumnDefinition Width="*" />
+                                <ColumnDefinition Width="190" />
+                            </Grid.ColumnDefinitions>
+                            <TextBox x:Name="SearchBox" ToolTip="Pesquisar computadores" TextChanged="SearchBox_TextChanged" />
+                            <ComboBox x:Name="GroupFilterBox" Grid.Column="1" Height="33" Margin="0,4,0,9" SelectionChanged="GroupFilterBox_SelectionChanged" ToolTip="Filtrar por grupo" />
+                        </Grid>
+                        <Grid Grid.Row="2">
+                            <ListBox x:Name="ComputerGrid" SelectionChanged="ComputerGrid_SelectionChanged" MouseDoubleClick="ConnectSelected_Click">
+                                <ListBox.ItemTemplate>
+                                    <DataTemplate>
+                                        <Border Background="{StaticResource Surface}" BorderBrush="{StaticResource Line}"
+                                                BorderThickness="1" CornerRadius="8" Padding="14" Margin="5">
+                                            <Grid>
+                                                <Grid.ColumnDefinitions>
+                                                    <ColumnDefinition Width="*" />
+                                                    <ColumnDefinition Width="Auto" />
+                                                </Grid.ColumnDefinitions>
+                                                <StackPanel>
+                                                    <DockPanel>
+                                                        <TextBlock Text="{Binding Name}" FontSize="16" FontWeight="SemiBold" />
+                                                        <TextBlock Text="  ★" Foreground="{StaticResource Accent}" FontSize="14"
+                                                                   Visibility="{Binding IsFavorite, Converter={StaticResource BoolToVisibility}}" />
+                                                    </DockPanel>
+                                                    <TextBlock Text="{Binding ConnectionHost}" Foreground="{StaticResource TextSecondary}" Margin="0,5,0,0" />
+                                                    <StackPanel Orientation="Horizontal" Margin="0,7,0,0">
+                                                        <TextBlock Text="{Binding Port, StringFormat='Porta {0}'}" FontSize="11" Foreground="{StaticResource TextSecondary}" />
+                                                        <TextBlock Text="{Binding Group, StringFormat='  ·  {0}'}" FontSize="11" Foreground="{StaticResource TextSecondary}" />
+                                                    </StackPanel>
+                                                    <TextBlock Text="{Binding LastResult, StringFormat='Último resultado: {0}'}" FontSize="11"
+                                                               Foreground="{StaticResource TextSecondary}" Margin="0,5,0,0" />
+                                                </StackPanel>
+                                                <Button Grid.Column="1" Content="Conectar" Tag="{Binding}" Click="ConnectCard_Click"
+                                                        VerticalAlignment="Center" MinWidth="94" />
+                                            </Grid>
+                                        </Border>
+                                    </DataTemplate>
+                                </ListBox.ItemTemplate>
+                            </ListBox>
+                            <TextBlock x:Name="ComputersEmptyState" Text="Nenhum computador ainda. Cadastre um destino ou conecte por IP/hostname." Foreground="{StaticResource TextSecondary}" TextWrapping="Wrap" HorizontalAlignment="Center" VerticalAlignment="Center" Margin="40" IsHitTestVisible="False" />
+                        </Grid>
+                    </Grid>
+                    <Border Grid.Column="1" Background="{StaticResource Surface}" BorderBrush="{StaticResource Line}" BorderThickness="1" CornerRadius="9" Padding="16">
+                        <ScrollViewer VerticalScrollBarVisibility="Auto">
+                            <StackPanel>
+                                <TextBlock x:Name="EditorTitle" Text="Novo computador" FontSize="18" FontWeight="SemiBold" Margin="0,0,0,12" />
+                                <TextBlock Text="Nome amigável" />
+                                <TextBox x:Name="NameBox" />
+                                <TextBlock Text="Hostname (opcional)" />
+                                <TextBox x:Name="HostnameBox" />
+                                <TextBlock Text="Endereço IP (opcional)" />
+                                <TextBox x:Name="IpAddressBox" />
+                                <TextBlock Text="Porta TCP" />
+                                <TextBox x:Name="ComputerPortBox" Text="5900" />
+                                <TextBlock Text="Grupo / categoria" />
+                                <TextBox x:Name="GroupBox" />
+                                <TextBlock Text="Preferência de visualização" />
+                                <ComboBox x:Name="ViewPreferenceBox" Margin="0,4,0,10" Height="32">
+                                    <ComboBoxItem Content="Ajustar à janela" Tag="fit" IsSelected="True" />
+                                    <ComboBoxItem Content="100%" Tag="100%" />
+                                </ComboBox>
+                                <CheckBox x:Name="FavoriteBox" Content="Favorito" Foreground="#DAE1E8" Margin="0,5,0,10" />
+                                <StackPanel Orientation="Horizontal">
+                                    <Button Content="Salvar" Click="SaveComputer_Click" />
+                                    <Button Content="Limpar" Click="NewComputer_Click" />
+                                </StackPanel>
+                                <Button x:Name="RemoveCredentialButton" Content="Remover credencial lembrada" Click="RemoveSavedCredential_Click" IsEnabled="False" Margin="0,8,0,0" />
+                                <TextBlock Text="Senhas não são salvas por padrão. Com consentimento, podem ser protegidas pelo Windows Credential Manager; nunca são gravadas no SQLite." FontSize="11" Foreground="{StaticResource TextSecondary}" TextWrapping="Wrap" Margin="0,12,0,0" />
+                            </StackPanel>
+                        </ScrollViewer>
+                    </Border>
+                </Grid>
+
+                <Grid x:Name="HistoryPage" Visibility="Collapsed">
+                    <Grid>
+                        <DataGrid x:Name="HistoryGrid">
+                            <DataGrid.Columns>
+                                <DataGridTextColumn Header="Destino" Binding="{Binding Host}" Width="*" />
+                                <DataGridTextColumn Header="Porta" Binding="{Binding Port}" Width="90" />
+                                <DataGridTextColumn Header="Data" Binding="{Binding ConnectedUtc}" Width="220" />
+                                <DataGridTextColumn Header="Duração (ms)" Binding="{Binding DurationMilliseconds}" Width="130" />
+                                <DataGridTextColumn Header="Resultado" Binding="{Binding Result}" Width="*" />
+                            </DataGrid.Columns>
+                        </DataGrid>
+                        <TextBlock x:Name="HistoryEmptyState" Text="Ainda não há conexões no histórico." Foreground="#AAB6C2" HorizontalAlignment="Center" VerticalAlignment="Center" IsHitTestVisible="False" />
+                    </Grid>
+                </Grid>
+
+                <Grid x:Name="AccessPage" Visibility="Collapsed">
+                    <Grid.ColumnDefinitions>
+                        <ColumnDefinition Width="420" />
+                        <ColumnDefinition Width="*" />
+                    </Grid.ColumnDefinitions>
+                    <Border Background="{StaticResource Surface}" BorderBrush="{StaticResource Line}" BorderThickness="1" CornerRadius="9" Padding="18" Margin="0,0,16,0">
+                        <StackPanel>
+                            <TextBlock Text="Acesso recebido nesta sessão" FontSize="19" FontWeight="SemiBold" Margin="0,0,0,12" />
+                            <TextBlock Text="Endereço de bind" />
+                            <TextBox x:Name="BindAddressBox" Text="127.0.0.1" />
+                            <TextBlock Text="Porta TCP" />
+                            <TextBox x:Name="ServerPortBox" Text="5900" />
+                            <TextBlock Text="Senha VNC (8 caracteres ASCII)" />
+                            <PasswordBox x:Name="ServerPasswordBox" MaxLength="8" />
+                            <CheckBox x:Name="ServerViewOnlyCheckBox" Content="Somente visualização" IsChecked="False" Foreground="#DAE1E8" Margin="0,4,0,12" />
+                            <StackPanel Orientation="Horizontal">
+                                <Button x:Name="StartServerButton" Content="Habilitar acesso" Click="StartServer_Click" />
+                                <Button x:Name="StopServerButton" Content="Desabilitar" Click="StopServer_Click" IsEnabled="False" />
+                            </StackPanel>
+                            <TextBlock x:Name="ServerStatus" Text="Desativado" Margin="0,10,0,0" />
+                        </StackPanel>
+                    </Border>
+                    <Border Grid.Column="1" Background="{StaticResource Surface}" BorderBrush="{StaticResource Line}" BorderThickness="1" CornerRadius="9" Padding="20">
+                        <StackPanel>
+                            <TextBlock Text="LucyServer Windows Service" FontSize="19" FontWeight="SemiBold" Foreground="{StaticResource Accent}" />
+                            <TextBlock x:Name="ServiceStatus" Text="Não instalado / não iniciado. Nenhum serviço ou regra de firewall foi alterado." Margin="0,10,0,0" TextWrapping="Wrap" />
+                            <TextBlock Text="O acesso recebido abaixo é um modo em primeiro plano nesta sessão interativa. A execução como serviço com agente de sessão e IPC restrito ainda não está ativada nesta build. Não instale nem inicie serviços durante o desenvolvimento." Foreground="#D6B77A" Margin="0,18,0,0" TextWrapping="Wrap" />
+                            <TextBlock Text="VNC Authentication não cifra a sessão. O bind deve ser loopback ou um IP privado/VPN autorizado; LucyVNC não cria regras de firewall." Foreground="#AAB6C2" Margin="0,18,0,0" TextWrapping="Wrap" />
+                            <TextBlock Text="Histórico de sessões recebidas com origem e duração depende do serviço de produção." Foreground="#AAB6C2" Margin="0,18,0,0" TextWrapping="Wrap" />
+                        </StackPanel>
+                    </Border>
+                </Grid>
+
+                <Grid x:Name="SettingsPage" Visibility="Collapsed">
+                    <Border Background="{StaticResource Surface}" BorderBrush="{StaticResource Line}" BorderThickness="1" CornerRadius="9" Padding="22">
+                        <StackPanel>
+                            <TextBlock Text="Preferências locais" FontSize="20" FontWeight="SemiBold" />
+                            <TextBlock Text="Banco SQLite em %LOCALAPPDATA%\LucyVNC\lucy.db. O banco contém computadores, preferências e histórico; senhas não são gravadas." Margin="0,12,0,0" TextWrapping="Wrap" />
+                            <TextBlock Text="A captura e SendInput requerem uma sessão Windows interativa. Desktop seguro, UAC, logon e sessões não interativas não são suportados." Foreground="#D6B77A" Margin="0,16,0,0" TextWrapping="Wrap" />
+                            <TextBlock x:Name="DatabaseStatus" Text="" Foreground="#9FAAB5" Margin="0,14,0,0" />
+                        </StackPanel>
+                    </Border>
+                </Grid>
+
+                <Grid x:Name="SessionsPage" Visibility="Collapsed">
+                    <Grid>
+                    <Grid.RowDefinitions>
+                        <RowDefinition Height="Auto" />
+                        <RowDefinition Height="*" />
+                    </Grid.RowDefinitions>
+                    <StackPanel Grid.Row="0" Orientation="Horizontal" Margin="0,0,0,12">
+                        <Button Content="Abrir janela de sessões" Click="OpenWorkspace_Click" />
+                        <Button Content="Desconectar selecionada" Click="CloseSelectedSession_Click" />
+                        <Button Content="Reconectar" Click="ReconnectSelectedSession_Click" />
+                    </StackPanel>
+                    <Grid Grid.Row="1">
+                        <DataGrid x:Name="SessionList" MouseDoubleClick="OpenWorkspace_Click">
+                            <DataGrid.Columns>
+                                <DataGridTextColumn Header="Computador" Binding="{Binding DisplayName}" Width="*" />
+                                <DataGridTextColumn Header="Destino" Binding="{Binding Endpoint}" Width="*" />
+                                <DataGridTextColumn Header="Estado" Binding="{Binding DisplayStatus}" Width="2*" />
+                                <DataGridTextColumn Header="Conectada desde" Binding="{Binding ConnectedAtDisplay}" Width="*" />
+                            </DataGrid.Columns>
+                        </DataGrid>
+                        <TextBlock x:Name="SessionsEmptyState" Text="Nenhuma sessão aberta. Conecte-se a um computador para iniciar uma sessão." Foreground="#AAB6C2" HorizontalAlignment="Center" VerticalAlignment="Center" IsHitTestVisible="False" />
+                    </Grid>
+                </Grid>
+                </Grid>
+            </Grid>
+        </Grid>
+    </Grid>
+</Window>

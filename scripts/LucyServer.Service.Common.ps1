@@ -20,7 +20,7 @@ function Assert-LvcWindowsAdministrator {
 }
 
 function Write-LvcServiceNotice {
-    Write-Warning 'LucyServer deliberately refuses all remote sharing. Its interactive-session agent and authenticated IPC are not implemented; installing or starting this service does not provide usable VNC sharing. These scripts do not create firewall rules.'
+    Write-Warning 'LucyServer opens an authenticated loopback RFB listener when remote sharing is enabled; its interactive-session agent and authenticated IPC are not implemented, so the worker provides no usable VNC sharing without a valid VNC password. These scripts do not create firewall rules.'
 }
 
 function Get-LvcService {

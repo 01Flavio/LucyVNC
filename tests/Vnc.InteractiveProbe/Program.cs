@@ -26,13 +26,13 @@ internal static class Program
                     {
                         BindAddress = "127.0.0.1",
                         Port = 0,
-                        Password = "lucytest",
+                        Password = "lucytest1",
                     },
                     remoteInput: new LoggingRemoteInput());
                 server.Start();
                 form.Tag = server;
                 form.StartManualUpdates();
-                Console.WriteLine($"READY:{server.BoundPort}:lucytest");
+                Console.WriteLine($"READY:{server.BoundPort}:lucytest1");
                 var target = form.ClickTarget.PointToScreen(new Point(form.ClickTarget.Width / 2, form.ClickTarget.Height / 2));
                 var bounds = Screen.PrimaryScreen?.Bounds
                     ?? throw new InvalidOperationException("Windows did not report a primary display.");
@@ -70,7 +70,7 @@ internal static class Program
             {
                 BindAddress = "127.0.0.1",
                 Port = 0,
-                Password = "lucytest",
+                Password = "lucytest1",
             });
             server.Start();
 
@@ -78,7 +78,7 @@ internal static class Program
             {
                 Host = "127.0.0.1",
                 Port = server.BoundPort,
-                Password = "lucytest",
+                Password = "lucytest1",
             });
             var framebufferLock = new object();
             byte[]? lastFramebuffer = null;
@@ -172,7 +172,7 @@ internal static class Program
             {
                 Host = "127.0.0.1",
                 Port = server.BoundPort,
-                Password = "lucytest",
+                Password = "lucytest1",
             });
             var reconnectFrame = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
             reconnectedViewer.FramebufferUpdated += (_, args) =>

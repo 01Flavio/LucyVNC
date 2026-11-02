@@ -33,7 +33,7 @@ Do not expose classic VNC directly to an untrusted network. The protocol does no
 
 ## LucyServer Windows Service groundwork
 
-The .NET Worker Service executable and administrator scripts are included, but the service deliberately refuses all remote sharing because there is no interactive-session agent or authenticated IPC. Installing or starting it does not create a VNC endpoint and does not replace the foreground Server. The Manager displays Service Control Manager status; service installation and control are currently manual.
+The .NET Worker Service executable and administrator scripts are included. The worker opens an authenticated loopback RFB listener when remote sharing is enabled and the `LUCYVNC_VNC_PASSWORD` environment variable holds an eight-character ASCII VNC password; without both it keeps no listener open. The interactive-session agent and authenticated IPC are not implemented yet, so installing or starting it does not by itself provide remote desktop sharing. The Manager displays Service Control Manager status; service installation and control are currently manual.
 
 If you explicitly need to validate only the worker's SCM lifecycle, publish the executable:
 

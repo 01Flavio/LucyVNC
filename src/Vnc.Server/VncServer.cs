@@ -141,6 +141,10 @@ public sealed class VncServer : IDisposable
             {
                 break;
             }
+            catch (ObjectDisposedException)
+            {
+                break;
+            }
 
             client.NoDelay = true;
             if (!_sessionSlots.Wait(0))

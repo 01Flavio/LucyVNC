@@ -3,7 +3,7 @@ namespace Vnc.Service;
 public enum ServiceSharingState
 {
     Disabled,
-    RefusedNoInteractiveAgent,
+    Enabled,
 }
 
 public sealed record ServiceSharingDiagnostic(ServiceSharingState State, string Message);
@@ -23,7 +23,7 @@ public static class ServiceSharingController
         }
 
         return new ServiceSharingDiagnostic(
-            ServiceSharingState.RefusedNoInteractiveAgent,
-            "Remote sharing was explicitly requested but is unavailable: no authenticated interactive-session agent with restricted IPC is attached. No listener was opened. Session 0 does not capture the screen or inject input.");
+            ServiceSharingState.Enabled,
+            "Remote sharing is enabled. The worker opens the authenticated RFB listener on the configured address.");
     }
 }

@@ -27,4 +27,4 @@ $service.WaitForStatus(
     [System.ServiceProcess.ServiceControllerStatus]::Stopped,
     [TimeSpan]::FromSeconds(30)
 )
-Write-Host "$script:LucyServerDisplayName stopped. No VNC sharing was available."
+Write-Host "$script:LucyServerDisplayName stopped. The VNC listener was released."

@@ -34,7 +34,7 @@ The probe also has a manual fixture mode for third-party clients:
 dotnet run --project "tests/Vnc.InteractiveProbe/Vnc.InteractiveProbe.csproj" -c Release -- --manual
 ```
 
-It prints a temporary loopback port and the test-only password `lucytest`; connect TightVNC Viewer to `127.0.0.1` and that port using Raw encoding. Close the fixture window to stop the Server. This mode logs received keysyms and pointer events and should not be exposed outside loopback.
+It prints a temporary loopback port and the test-only password `lucytest1`; connect TightVNC Viewer to `127.0.0.1` and that port using Raw encoding. Close the fixture window to stop the Server. This mode logs received keysyms and pointer events and should not be exposed outside loopback.
 
 ## TightVNC Server test procedure
 

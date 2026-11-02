@@ -20,14 +20,13 @@ public sealed class ServiceSharingControllerTests
     }
 
     [Fact]
-    public void ExplicitOptInStillRefusesWithoutInteractiveAgent()
+    public void ExplicitOptInStartsTheAuthenticatedListenerPolicy()
     {
         var result = ServiceSharingController.Evaluate(
             ServiceConfiguration.SafeDefaults with { RemoteSharingEnabled = true });
 
-        Assert.Equal(ServiceSharingState.RefusedNoInteractiveAgent, result.State);
-        Assert.Contains("No listener was opened", result.Message);
-        Assert.Contains("Session 0", result.Message);
+        Assert.Equal(ServiceSharingState.Enabled, result.State);
+        Assert.Contains("authenticated RFB listener", result.Message);
     }
 
     [Theory]

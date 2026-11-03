@@ -170,7 +170,7 @@ public class ServiceWorkerTests
         var sid = WindowsIdentity.GetCurrent().User?.Value
             ?? throw new InvalidOperationException("The test requires a Windows user SID.");
         var input = new RecordingInput();
-        using var agent = new LucySessionAgent(new FakeScreenCapture(), input, sid, pipeName);
+        using var agent = new LucySessionAgent(new FakeScreenCapture(), input, sid, pipeName, interactiveDesktopAvailable: () => true);
         var configPath = Path.Combine(Path.GetTempPath(), $"LucyVNC-{Guid.NewGuid():N}", "service.json");
         var store = new ServiceConfigurationStore(configPath);
         var port = GetAvailableLoopbackPort();
@@ -366,18 +366,36 @@ public class ServiceWorkerTests
         public async Task WaitForLineAsync(string expectedLine, TimeSpan timeout)
         {
             using var cancellation = new CancellationTokenSource(timeout);
-            while (!_output.Contains(expectedLine))
+            try
             {
-                await _outputChanged.WaitAsync(cancellation.Token);
+                while (!_output.Contains(expectedLine))
+                {
+                    await _outputChanged.WaitAsync(cancellation.Token);
+                }
+            }
+            catch (OperationCanceledException exception)
+            {
+                throw new TimeoutException(
+                    $"Process {_label} did not emit '{expectedLine}' within {timeout}. Output:{Environment.NewLine}{string.Join(Environment.NewLine, _output)}",
+                    exception);
             }
         }
 
         public async Task WaitForLineContainingAsync(string text, int occurrence, TimeSpan timeout)
         {
             using var cancellation = new CancellationTokenSource(timeout);
-            while (_output.Count(line => line.Contains(text, StringComparison.Ordinal)) < occurrence)
+            try
             {
-                await _outputChanged.WaitAsync(cancellation.Token);
+                while (_output.Count(line => line.Contains(text, StringComparison.Ordinal)) < occurrence)
+                {
+                    await _outputChanged.WaitAsync(cancellation.Token);
+                }
+            }
+            catch (OperationCanceledException exception)
+            {
+                throw new TimeoutException(
+                    $"Process {_label} did not emit '{text}' occurrence {occurrence} within {timeout}. Output:{Environment.NewLine}{string.Join(Environment.NewLine, _output)}",
+                    exception);
             }
         }
 

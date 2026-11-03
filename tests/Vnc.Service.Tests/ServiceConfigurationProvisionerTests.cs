@@ -116,4 +116,34 @@ public sealed class ServiceConfigurationProvisionerTests
             }
         }
     }
+
+    [Fact]
+    public void RuntimeStatusRoundTripsTheIndependentListenerState()
+    {
+        var directory = Path.Combine(Path.GetTempPath(), $"LucyVNC-{Guid.NewGuid():N}");
+        var statusPath = Path.Combine(directory, "runtime-status.json");
+        var store = new ServiceRuntimeStatusStore(statusPath);
+        var expected = new ServiceRuntimeStatus(
+            "Ready",
+            AgentAuthenticated: true,
+            ListenerActive: true,
+            "127.0.0.1",
+            5901,
+            DateTimeOffset.UtcNow,
+            "RFB listener is ready.");
+
+        try
+        {
+            store.Write(expected, WindowsIdentity.GetCurrent().User!.Value);
+
+            Assert.Equal(expected, store.Read());
+        }
+        finally
+        {
+            if (Directory.Exists(directory))
+            {
+                Directory.Delete(directory, recursive: true);
+            }
+        }
+    }
 }

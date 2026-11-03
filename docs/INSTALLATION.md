@@ -9,10 +9,11 @@ dotnet restore "LucyVNC.slnx"
 dotnet publish "src/Vnc.App/Vnc.App.csproj" -c Release -r win-x64 --self-contained true
 dotnet publish "src/Vnc.Service/Vnc.Service.csproj" -c Release -r win-x64 --self-contained true
 dotnet publish "src/Vnc.Agent/Vnc.Agent.csproj" -c Release -r win-x64 --self-contained true
+dotnet publish "src/Vnc.Tray/Vnc.Tray.csproj" -c Release -r win-x64 --self-contained true
 & "C:\Users\Zero\AppData\Local\Programs\Inno Setup 6\ISCC.exe" "installer\LucyVNC.iss"
 ```
 
-The installer output is written to `artifacts\LucyVNC-Setup-2.3.0-x64.exe`. Installing the application does not install/start LucyServer, register the Agent, or create firewall rules. Launch `LucyViewer.exe` from the installed application directory.
+The installer output is written to `artifacts\LucyVNC-Setup-2.3.1-x64.exe`. Installing the application does not install/start LucyServer, register the Agent, or create firewall rules. Launch `LucyViewer.exe` from the installed application directory.
 
 To publish only the WPF Manager for development:
 
@@ -44,7 +45,9 @@ Do not expose classic VNC directly to an untrusted network. The protocol does no
 
 The Worker Service and the interactive-session Agent are separate executables. The Agent performs desktop capture and `SendInput` in the logged-in user's session; the Worker owns the RFB listener and connects to the Agent over a versioned named-pipe protocol with Windows SID checks. The Manager's **Acessos** page can save the service configuration through UAC, install/start/stop/restart/uninstall the service through explicit elevated actions, and display SCM diagnostics. A running service is restarted after configuration is saved. The password is stored as DPAPI LocalMachine ciphertext in ProgramData with an ACL for SYSTEM and Administrators; it is not shown back in the Manager. The automated process integration test uses synthetic capture/input and does not prove real desktop capture, real input injection, or operation of an installed service.
 
-The service is installed as Automatic but left stopped. To share the interactive desktop, sign in to the intended Windows user, configure the service in the Manager, optionally enable the per-user Agent startup supervisor, install the service, and start it. The startup supervisor launches the Agent at that user's logon and restarts it after an unexpected failure; it is not managed by SCM and does not broker logon, logout, lock, user switches, or secure-desktop access. Although the Worker is intended to authenticate as LocalSystem to the session Agent, **that identity boundary has not been validated with a real installed service**. Do not treat successful installation or SCM `Running` status as proof that remote desktop sharing is operational.
+The service can be configured for Automatic or Manual startup and is left stopped after installation. To share the interactive desktop, sign in to the intended Windows user, configure the service in the Manager, optionally enable **Iniciar bandeja e Agent no logon**, install the service, and start it. The independent LucyServer tray app launches an Agent supervisor in that user's session and restarts the Agent with bounded backoff after an unexpected failure. Closing the Manager or exiting the tray does not stop the Agent supervisor or service. The supervisor is not managed by SCM and does not broker logon, logout, lock, or user switches. The Worker publishes a runtime status so SCM `Running` is distinguishable from an authenticated Agent and active listener. The Worker opens no listener without the configured Agent and an available interactive `Default` desktop; it closes the listener when that desktop becomes unavailable. Although the Worker is intended to authenticate as LocalSystem to the session Agent, **that identity boundary has not been validated with a real installed service**. Do not treat successful installation or SCM `Running` status as proof that remote desktop sharing is operational.
+
+The LucyServer tray menu displays SCM and runtime status, starts/stops persistent sharing through UAC-approved scripts, opens Manager settings, and can configure the tray to start at the current user's logon. **Sair da bandeja** only exits the tray application. It does not stop the Windows service or its Agent supervisor. The Manager's own tray icon is a separate feature.
 
 Service lifecycle actions in the Manager invoke UAC. The equivalent scripts in `scripts\` also require an elevated PowerShell session. Installation is reversible, leaves the service stopped, and does not configure a firewall. Uninstalling the application is blocked while LucyServer remains installed; remove the service first from **Acessos** or with `Uninstall-LucyServerService.ps1`.
 

@@ -7,42 +7,42 @@ namespace Vnc.App;
 internal static class AgentStartupRegistration
 {
     private const string RunKeyPath = @"Software\Microsoft\Windows\CurrentVersion\Run";
-    private const string ValueName = "LucyVNC.SessionAgent";
-    private const string LocalSystemSid = "S-1-5-18";
+    private const string ValueName = "LucyVNC.ServerTray";
+    private const string LegacyValueName = "LucyVNC.SessionAgent";
 
     public static bool IsEnabled()
     {
         using var runKey = Registry.CurrentUser.OpenSubKey(RunKeyPath, writable: false);
-        return runKey?.GetValue(ValueName) is string;
+        return runKey?.GetValue(ValueName) is string || runKey?.GetValue(LegacyValueName) is string;
     }
 
-    public static void SetEnabled(bool enabled, string agentExecutablePath)
+    public static void SetEnabled(bool enabled, string trayExecutablePath)
     {
         using var runKey = Registry.CurrentUser.CreateSubKey(RunKeyPath, writable: true)
             ?? throw new InvalidOperationException("Could not open the current-user startup registry key.");
         if (!enabled)
         {
             runKey.DeleteValue(ValueName, throwOnMissingValue: false);
+            runKey.DeleteValue(LegacyValueName, throwOnMissingValue: false);
             return;
         }
 
-        var executable = Path.GetFullPath(agentExecutablePath);
+        var executable = Path.GetFullPath(trayExecutablePath);
         if (!File.Exists(executable))
         {
-            throw new FileNotFoundException("The LucyVNC interactive Agent executable was not found.", executable);
+            throw new FileNotFoundException("The LucyServer tray executable was not found.", executable);
         }
 
-        var escapedExecutable = executable.Replace("'", "''", StringComparison.Ordinal);
-        var command = $"powershell.exe -NoProfile -WindowStyle Hidden -Command \"Start-Process -FilePath '{escapedExecutable}' -ArgumentList '--supervise --authorized-worker-sid {LocalSystemSid}' -WindowStyle Hidden\"";
-        runKey.SetValue(ValueName, command, RegistryValueKind.String);
+        runKey.SetValue(ValueName, $"\"{executable}\"", RegistryValueKind.String);
+        runKey.DeleteValue(LegacyValueName, throwOnMissingValue: false);
     }
 
-    public static void StartNow(string agentExecutablePath)
+    public static void StartNow(string trayExecutablePath)
     {
-        var executable = Path.GetFullPath(agentExecutablePath);
+        var executable = Path.GetFullPath(trayExecutablePath);
         if (!File.Exists(executable))
         {
-            throw new FileNotFoundException("The LucyVNC interactive Agent executable was not found.", executable);
+            throw new FileNotFoundException("The LucyServer tray executable was not found.", executable);
         }
 
         var startInfo = new ProcessStartInfo(executable)
@@ -51,10 +51,7 @@ internal static class AgentStartupRegistration
             CreateNoWindow = true,
             WorkingDirectory = Path.GetDirectoryName(executable)!,
         };
-        startInfo.ArgumentList.Add("--supervise");
-        startInfo.ArgumentList.Add("--authorized-worker-sid");
-        startInfo.ArgumentList.Add(LocalSystemSid);
         using var agentProcess = Process.Start(startInfo)
-            ?? throw new InvalidOperationException("Could not start the LucyVNC interactive Agent.");
+            ?? throw new InvalidOperationException("Could not start the LucyServer tray application.");
     }
 }

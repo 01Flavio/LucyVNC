@@ -1,0 +1,17 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <OutputType>WinExe</OutputType>
+    <AssemblyName>LucyTray</AssemblyName>
+    <TargetFramework>net8.0-windows</TargetFramework>
+    <ApplicationIcon>..\Vnc.App\Assets\LucyVNC.ico</ApplicationIcon>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Nullable>enable</Nullable>
+    <UseWindowsForms>true</UseWindowsForms>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\Vnc.Service\Vnc.Service.csproj" />
+  </ItemGroup>
+
+</Project>

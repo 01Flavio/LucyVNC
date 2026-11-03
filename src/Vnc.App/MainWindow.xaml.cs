@@ -1471,7 +1471,23 @@ public partial class MainWindow : Window
 
     private void RefreshServiceStatus()
     {
-        ServiceStatus.Text = WindowsServiceStatusProbe.GetDiagnostic();
+        var serviceDiagnostic = WindowsServiceStatusProbe.GetDiagnostic();
+        try
+        {
+            var runtimeStatus = new ServiceRuntimeStatusStore(new ServiceConfigurationStore().RuntimeStatusPath).Read();
+            if (runtimeStatus is null)
+            {
+                ServiceStatus.Text = $"{serviceDiagnostic}{Environment.NewLine}Runtime: ainda não há diagnóstico publicado pelo Worker.";
+                return;
+            }
+
+            var fresh = DateTimeOffset.UtcNow - runtimeStatus.UpdatedUtc <= TimeSpan.FromSeconds(20);
+            ServiceStatus.Text = $"{serviceDiagnostic}{Environment.NewLine}Runtime {(fresh ? "atual" : "desatualizado")}: {runtimeStatus.State}. {runtimeStatus.Detail}";
+        }
+        catch (Exception exception) when (exception is IOException or UnauthorizedAccessException or System.Security.SecurityException or System.Text.Json.JsonException or InvalidDataException)
+        {
+            ServiceStatus.Text = $"{serviceDiagnostic}{Environment.NewLine}Runtime: não foi possível ler o diagnóstico ({exception.Message}).";
+        }
     }
 
     private void LoadServiceConfiguration()
@@ -1480,6 +1496,7 @@ public partial class MainWindow : Window
         {
             var configuration = new ServiceConfigurationStore().LoadExisting();
             ServiceSharingCheckBox.IsChecked = configuration.RemoteSharingEnabled;
+            ServiceAutoStartCheckBox.IsChecked = configuration.StartAutomatically;
             ServiceBindAddressBox.Text = configuration.BindAddress;
             ServicePortBox.Text = configuration.Port.ToString();
             AgentAutoStartCheckBox.IsChecked = AgentStartupRegistration.IsEnabled();
@@ -1523,12 +1540,13 @@ public partial class MainWindow : Window
             return;
         }
 
-        var agentPath = GetAgentExecutablePath();
+        var trayPath = GetTrayExecutablePath();
         var configuration = new ServiceConfiguration
         {
             RemoteSharingEnabled = ServiceSharingCheckBox.IsChecked == true,
             BindAddress = bindAddress.ToString(),
             Port = port,
+            StartAutomatically = ServiceAutoStartCheckBox.IsChecked == true,
             AuthenticationRequired = true,
             MaxSessions = 1,
             AgentSid = WindowsIdentity.GetCurrent().User?.Value
@@ -1544,15 +1562,15 @@ public partial class MainWindow : Window
                 new ServiceConfigurationRequest(configuration, password));
             await RunElevatedConfigurationAsync(GetServiceExecutablePath(), requestPath);
             var agentAutoStartEnabled = AgentAutoStartCheckBox.IsChecked == true;
-            AgentStartupRegistration.SetEnabled(agentAutoStartEnabled, agentPath);
+            AgentStartupRegistration.SetEnabled(agentAutoStartEnabled, trayPath);
             if (agentAutoStartEnabled)
             {
-                AgentStartupRegistration.StartNow(agentPath);
+                AgentStartupRegistration.StartNow(trayPath);
             }
 
             ServiceStatus.Text = configuration.RemoteSharingEnabled
                 ? agentAutoStartEnabled
-                    ? "Configuração protegida. Se o serviço já estava ativo, foi reiniciado; se estava parado, inicie-o para aplicar. O supervisor do Agent foi iniciado e registrado para este usuário."
+                    ? "Configuração protegida. Se o serviço já estava ativo, foi reiniciado; se estava parado, inicie-o para aplicar. A bandeja LucyServer e o supervisor do Agent foram iniciados e registrados para este usuário."
                     : "Configuração protegida. Se o serviço já estava ativo, foi reiniciado; se estava parado, inicie-o para aplicar. O serviço só poderá compartilhar quando um Agent interativo estiver ativo."
                 : "Compartilhamento desabilitado na configuração protegida. Se o serviço estava ativo, foi reiniciado; se estava parado, não há listener.";
             ServicePasswordBox.Clear();
@@ -1599,7 +1617,12 @@ public partial class MainWindow : Window
     }
 
     private async void InstallService_Click(object sender, RoutedEventArgs e) =>
-        await RunServiceScriptFromUiAsync("Install-LucyServerService.ps1", "-ExecutablePath", GetServiceExecutablePath());
+        await RunServiceScriptFromUiAsync(
+            "Install-LucyServerService.ps1",
+            "-ExecutablePath",
+            GetServiceExecutablePath(),
+            "-StartupType",
+            ServiceAutoStartCheckBox.IsChecked == true ? "Automatic" : "Manual");
 
     private async void StartService_Click(object sender, RoutedEventArgs e) =>
         await RunServiceScriptFromUiAsync("Start-LucyServerService.ps1");
@@ -1664,8 +1687,8 @@ public partial class MainWindow : Window
     private static string GetServiceExecutablePath() =>
         ResolveLucyVncPath("Service", Path.Combine("Vnc.Service", "bin", "Release", "net8.0-windows", "Vnc.Service.exe"));
 
-    private static string GetAgentExecutablePath() =>
-        ResolveLucyVncPath("Agent", Path.Combine("Vnc.Agent", "bin", "Release", "net8.0-windows", "Vnc.Agent.exe"));
+    private static string GetTrayExecutablePath() =>
+        ResolveLucyVncPath("Tray", Path.Combine("Vnc.Tray", "bin", "Release", "net8.0-windows", "LucyTray.exe"));
 
     private static string GetServiceScriptPath(string scriptName)
     {

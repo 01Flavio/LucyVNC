@@ -20,7 +20,7 @@ public class LucySessionAgentTests
         var capture = new FakeScreenCapture();
         var input = new FakeRemoteInput();
         var pipeName = $"LucyVNCAgentTest_{Guid.NewGuid():N}";
-        using var agent = new LucySessionAgent(capture, input, AuthorizedSid, pipeName);
+        using var agent = new LucySessionAgent(capture, input, AuthorizedSid, pipeName, interactiveDesktopAvailable: () => true);
         await agent.StartAsync();
 
         using var client = new NamedPipeClientStream(".", pipeName, PipeDirection.InOut, PipeOptions.None);
@@ -70,7 +70,7 @@ public class LucySessionAgentTests
         var capture = new FakeScreenCapture();
         var input = new FakeRemoteInput();
         var pipeName = $"LucyVNCAgentTest_{Guid.NewGuid():N}";
-        using var agent = new LucySessionAgent(capture, input, AuthorizedSid, pipeName);
+        using var agent = new LucySessionAgent(capture, input, AuthorizedSid, pipeName, interactiveDesktopAvailable: () => true);
         await agent.StartAsync();
 
         using var client = new NamedPipeClientStream(".", pipeName, PipeDirection.InOut, PipeOptions.None);
@@ -85,6 +85,59 @@ public class LucySessionAgentTests
     }
 
     [Fact]
+    public async Task LucySessionAgentRejectsAuthenticatedWorkerWhenInteractiveDesktopIsUnavailable()
+    {
+        var pipeName = $"LucyVNCLocked_{Guid.NewGuid():N}";
+        using var agent = new LucySessionAgent(
+            new FakeScreenCapture(),
+            new FakeRemoteInput(),
+            AuthorizedSid,
+            pipeName,
+            interactiveDesktopAvailable: () => false);
+        await agent.StartAsync();
+
+        using var client = new NamedPipeClientStream(".", pipeName, PipeDirection.InOut, PipeOptions.None);
+        await client.ConnectAsync();
+        await WriteMessageAsync(client, new { Type = "Hello", Payload = new { ProtocolVersion = 1 } });
+
+        using var response = JsonDocument.Parse(await ReadMessageAsync(client));
+        var payload = response.RootElement.GetProperty("Payload");
+        Assert.False(payload.GetProperty("Accepted").GetBoolean());
+        Assert.Equal("DesktopUnavailable", payload.GetProperty("Status").GetString());
+        await agent.StopAsync();
+    }
+
+    [Fact]
+    public async Task LucySessionAgentReportsLockedDesktopOnHeartbeatAndReleasesInput()
+    {
+        var desktopAvailable = true;
+        var input = new FakeRemoteInput();
+        var pipeName = $"LucyVNCLockChange_{Guid.NewGuid():N}";
+        using var agent = new LucySessionAgent(
+            new FakeScreenCapture(),
+            input,
+            AuthorizedSid,
+            pipeName,
+            interactiveDesktopAvailable: () => desktopAvailable);
+        await agent.StartAsync();
+
+        using var client = new NamedPipeClientStream(".", pipeName, PipeDirection.InOut, PipeOptions.None);
+        await client.ConnectAsync();
+        await WriteMessageAsync(client, new { Type = "Hello", Payload = new { ProtocolVersion = 1 } });
+        using (var hello = JsonDocument.Parse(await ReadMessageAsync(client)))
+        {
+            Assert.True(hello.RootElement.GetProperty("Payload").GetProperty("Accepted").GetBoolean());
+        }
+
+        desktopAvailable = false;
+        await WriteMessageAsync(client, new { Type = "Heartbeat", Payload = new { } });
+        using var heartbeat = JsonDocument.Parse(await ReadMessageAsync(client));
+        Assert.Equal("DesktopUnavailable", heartbeat.RootElement.GetProperty("Payload").GetProperty("Status").GetString());
+        Assert.True(input.ReleaseCount > 0);
+        await agent.StopAsync();
+    }
+
+    [Fact]
     public async Task LucySessionAgentRejectsPeerWithDifferentWindowsIdentity()
     {
         var pipeName = $"LucyVNCAgentDenied_{Guid.NewGuid():N}";
@@ -92,7 +145,8 @@ public class LucySessionAgentTests
             new FakeScreenCapture(),
             new FakeRemoteInput(),
             "S-1-5-18",
-            pipeName);
+            pipeName,
+            interactiveDesktopAvailable: () => true);
         await agent.StartAsync();
 
         using var client = new NamedPipeClientStream(".", pipeName, PipeDirection.InOut, PipeOptions.None);
@@ -172,6 +226,7 @@ public class LucySessionAgentTests
     private sealed class FakeRemoteInput : IRemoteInput
     {
         public int KeyCount;
+        public int ReleaseCount;
 
         public void SetFramebufferSize(ushort width, ushort height)
         {
@@ -188,6 +243,7 @@ public class LucySessionAgentTests
 
         public void ReleaseAll()
         {
+            Interlocked.Increment(ref ReleaseCount);
         }
 
         public void Dispose()

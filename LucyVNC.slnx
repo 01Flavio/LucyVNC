@@ -8,6 +8,7 @@
   <Project Path="src/Vnc.App/Vnc.App.csproj" />
   <Project Path="src/Vnc.Service/Vnc.Service.csproj" />
   <Project Path="src/Vnc.Agent/Vnc.Agent.csproj" />
+  <Project Path="src/Vnc.Tray/Vnc.Tray.csproj" />
   <Project Path="tests/Vnc.Protocol.Tests/Vnc.Protocol.Tests.csproj" />
   <Project Path="tests/Vnc.Viewer.Tests/Vnc.Viewer.Tests.csproj" />
   <Project Path="tests/Vnc.Server.Tests/Vnc.Server.Tests.csproj" />

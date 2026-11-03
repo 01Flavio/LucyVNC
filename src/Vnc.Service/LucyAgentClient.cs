@@ -197,7 +197,7 @@ public sealed class LucyAgentClient : IDisposable
             return true;
         }, cancellationToken);
 
-    public Task SendHeartbeatAsync(CancellationToken cancellationToken) =>
+    public Task<bool> SendHeartbeatAsync(CancellationToken cancellationToken) =>
         ExecuteMessageAsync(async (stream, token) =>
         {
             await WriteMessageAsync(stream, new { Type = HeartbeatType, Payload = new { } }, token).ConfigureAwait(false);
@@ -208,7 +208,13 @@ public sealed class LucyAgentClient : IDisposable
                 throw new InvalidDataException("The LucyAgent did not acknowledge the heartbeat.");
             }
 
-            return true;
+            var status = document.RootElement.GetProperty("Payload").GetProperty("Status").GetString();
+            return status switch
+            {
+                "Ready" => true,
+                "DesktopUnavailable" => false,
+                _ => throw new InvalidDataException("The LucyAgent returned an unsupported heartbeat status."),
+            };
         }, cancellationToken);
 
     private async Task<T> ExecuteMessageAsync<T>(

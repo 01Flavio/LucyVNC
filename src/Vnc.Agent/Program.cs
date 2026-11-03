@@ -11,6 +11,7 @@ internal static class Program
 
     private static async Task Main(string[] args)
     {
+        EnsureInteractiveSession();
         if (args.Length > 0 && string.Equals(args[0], "--supervise", StringComparison.OrdinalIgnoreCase))
         {
             await RunSupervisorAsync(args);
@@ -73,17 +74,34 @@ internal static class Program
 
         var executable = Environment.ProcessPath
             ?? throw new InvalidOperationException("Could not resolve the LucyVNC Agent executable for supervision.");
+        var consecutiveFailures = 0;
         while (true)
         {
             using var agent = Process.Start(CreateAgentStartInfo(executable, args[2]))
                 ?? throw new InvalidOperationException("Could not start the LucyVNC interactive Agent.");
+            var startedAt = DateTimeOffset.UtcNow;
             await agent.WaitForExitAsync();
             if (agent.ExitCode == 0)
             {
                 return;
             }
 
-            await Task.Delay(TimeSpan.FromSeconds(3));
+            if (DateTimeOffset.UtcNow - startedAt >= TimeSpan.FromMinutes(5))
+            {
+                consecutiveFailures = 0;
+            }
+
+            consecutiveFailures++;
+            await Task.Delay(AgentRestartBackoff.GetDelay(consecutiveFailures));
+        }
+    }
+
+    private static void EnsureInteractiveSession()
+    {
+        using var process = Process.GetCurrentProcess();
+        if (!Environment.UserInteractive || process.SessionId == 0)
+        {
+            throw new InvalidOperationException("LucyVNC Agent must run in an interactive user session, not Session 0.");
         }
     }
 

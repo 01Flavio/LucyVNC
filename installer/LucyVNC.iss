@@ -1,5 +1,5 @@
 #define AppName "LucyVNC"
-#define AppVersion "2.3.0"
+#define AppVersion "2.3.1"
 #define AppPublisher "01Flavio"
 
 [Setup]
@@ -11,7 +11,7 @@ DefaultDirName={autopf}\LucyVNC
 DefaultGroupName=LucyVNC
 UninstallDisplayIcon={app}\LucyViewer.exe
 ArchitecturesAllowed=x64compatible
-ArchitecturesInstallIn64BitMode=x64
+ArchitecturesInstallIn64BitMode=x64compatible
 PrivilegesRequired=admin
 OutputDir=..\artifacts
 OutputBaseFilename=LucyVNC-Setup-{#AppVersion}-x64
@@ -28,6 +28,7 @@ Name: "desktopicon"; Description: "Criar atalho na área de trabalho"; GroupDesc
 Source: "..\src\Vnc.App\bin\Release\net8.0-windows\win-x64\publish\*"; DestDir: "{app}"; Flags: ignoreversion recursesubdirs createallsubdirs
 Source: "..\src\Vnc.Service\bin\Release\net8.0-windows\win-x64\publish\*"; DestDir: "{app}\Service"; Flags: ignoreversion recursesubdirs createallsubdirs
 Source: "..\src\Vnc.Agent\bin\Release\net8.0-windows\win-x64\publish\*"; DestDir: "{app}\Agent"; Flags: ignoreversion recursesubdirs createallsubdirs
+Source: "..\src\Vnc.Tray\bin\Release\net8.0-windows\win-x64\publish\*"; DestDir: "{app}\Tray"; Flags: ignoreversion recursesubdirs createallsubdirs
 Source: "..\scripts\*.ps1"; DestDir: "{app}\Scripts"; Flags: ignoreversion
 
 [Icons]
@@ -38,7 +39,8 @@ Name: "{autodesktop}\LucyVNC Manager"; Filename: "{app}\LucyViewer.exe"; Working
 Filename: "{app}\LucyViewer.exe"; Description: "Abrir LucyVNC Manager"; Flags: postinstall nowait skipifsilent
 
 [UninstallRun]
-Filename: "{sys}\reg.exe"; Parameters: "delete ""HKCU\Software\Microsoft\Windows\CurrentVersion\Run"" /v ""LucyVNC.SessionAgent"" /f"; Flags: runhidden waituntilterminated; StatusMsg: "Removendo a inicialização automática do agente para este usuário..."
+Filename: "{sys}\reg.exe"; Parameters: "delete ""HKCU\Software\Microsoft\Windows\CurrentVersion\Run"" /v ""LucyVNC.ServerTray"" /f"; Flags: runhidden waituntilterminated; RunOnceId: "RemoveLucyServerTrayStartup"; StatusMsg: "Removendo a inicialização automática da bandeja para este usuário..."
+Filename: "{sys}\reg.exe"; Parameters: "delete ""HKCU\Software\Microsoft\Windows\CurrentVersion\Run"" /v ""LucyVNC.SessionAgent"" /f"; Flags: runhidden waituntilterminated; RunOnceId: "RemoveLegacyLucyAgentStartup"; StatusMsg: "Removendo a inicialização automática antiga do Agent para este usuário..."
 
 [Code]
 function LucyServerServiceIsInstalled(): Boolean;

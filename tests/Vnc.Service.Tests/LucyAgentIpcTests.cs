@@ -16,7 +16,7 @@ public class LucyAgentIpcTests
     public async Task LucyAgentClientConnectsToLucySessionAgentAndExchangesFrameAndInput()
     {
         var pipeName = $"LucyVNCAgentIpc_{Guid.NewGuid():N}";
-        using var agent = new LucySessionAgent(new FakeScreenCapture(), new FakeRemoteInput(), AuthorizedSid, pipeName);
+        using var agent = new LucySessionAgent(new FakeScreenCapture(), new FakeRemoteInput(), AuthorizedSid, pipeName, interactiveDesktopAvailable: () => true);
         await agent.StartAsync();
 
         var client = new LucyAgentClient(pipeName, AuthorizedSid);
@@ -32,6 +32,30 @@ public class LucyAgentIpcTests
         await client.SendInputAsync(0x61, true, CancellationToken.None);
         await client.SendInputAsync(0x62, false, CancellationToken.None);
         await client.SendHeartbeatAsync(CancellationToken.None);
+
+        client.Dispose();
+        await agent.StopAsync();
+    }
+
+    [Fact]
+    public async Task LucyAgentClientReportsUnavailableInteractiveDesktopFromAuthenticatedHeartbeat()
+    {
+        var desktopAvailable = true;
+        var pipeName = $"LucyVNCAgentDesktop_{Guid.NewGuid():N}";
+        using var agent = new LucySessionAgent(
+            new FakeScreenCapture(),
+            new FakeRemoteInput(),
+            AuthorizedSid,
+            pipeName,
+            interactiveDesktopAvailable: () => desktopAvailable);
+        await agent.StartAsync();
+
+        using var client = new LucyAgentClient(pipeName, AuthorizedSid);
+        await client.ConnectAsync(CancellationToken.None);
+        Assert.True(await client.SendHeartbeatAsync(CancellationToken.None));
+
+        desktopAvailable = false;
+        Assert.False(await client.SendHeartbeatAsync(CancellationToken.None));
 
         client.Dispose();
         await agent.StopAsync();

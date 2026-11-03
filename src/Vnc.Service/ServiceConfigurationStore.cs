@@ -37,6 +37,8 @@ public sealed class ServiceConfigurationStore
     }
 
     public string ConfigurationPath => _configurationPath;
+    public string RuntimeStatusPath => Path.Combine(_directoryPath, "runtime-status.json");
+    public string CredentialPath => Path.Combine(_directoryPath, "vnc-credential.bin");
 
     public ServiceConfiguration LoadOrCreate()
     {

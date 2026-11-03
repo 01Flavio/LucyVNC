@@ -99,7 +99,7 @@ public static class ServiceConfigurationProvisioner
             var credentialStore = new ServiceCredentialStore();
             credentialStore.Save(request.Password);
             configurationStore.Save(request.Configuration);
-            return WindowsServiceStatusProbe.RestartIfRunning();
+            return WindowsServiceStatusProbe.RestartIfRunning(request.Configuration.StartAutomatically);
         }
         finally
         {
@@ -312,10 +312,19 @@ public static class ServiceConfigurationProvisioner
 
 public sealed class ServiceCredentialStore
 {
+    private readonly string? _credentialPath;
+
+    public ServiceCredentialStore(string? credentialPath = null)
+    {
+        _credentialPath = string.IsNullOrWhiteSpace(credentialPath)
+            ? null
+            : Path.GetFullPath(credentialPath);
+    }
+
     public void Save(string password)
     {
         ServiceConfigurationProvisioner.ValidatePassword(password);
-        var path = ServiceConfigurationProvisioner.GetCredentialPath();
+        var path = GetCredentialPath();
         var directory = Path.GetDirectoryName(path)!;
         Directory.CreateDirectory(directory);
         var plaintextPassword = Encoding.ASCII.GetBytes(password);
@@ -360,7 +369,7 @@ public sealed class ServiceCredentialStore
 
     public string Load()
     {
-        var path = ServiceConfigurationProvisioner.GetCredentialPath();
+        var path = GetCredentialPath();
         if (!File.Exists(path))
         {
             throw new FileNotFoundException("No protected LucyServer credential is configured.", path);
@@ -394,12 +403,15 @@ public sealed class ServiceCredentialStore
 
     public void Delete()
     {
-        var path = ServiceConfigurationProvisioner.GetCredentialPath();
+        var path = GetCredentialPath();
         if (File.Exists(path))
         {
             File.Delete(path);
         }
     }
+
+    private string GetCredentialPath() =>
+        _credentialPath ?? ServiceConfigurationProvisioner.GetCredentialPath();
 
     private static byte[] Protect(byte[] bytes)
     {

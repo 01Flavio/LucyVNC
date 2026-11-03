@@ -58,7 +58,7 @@ public static class WindowsServiceStatusProbe
         }
     }
 
-    public static bool RestartIfRunning()
+    public static bool RestartIfRunning(bool startAutomatically)
     {
         if (!OperatingSystem.IsWindows())
         {
@@ -73,7 +73,7 @@ public static class WindowsServiceStatusProbe
 
         try
         {
-            var service = OpenService(manager, ServiceName, ServiceQueryStatus | ServiceStart | ServiceStop);
+            var service = OpenService(manager, ServiceName, ServiceQueryStatus | ServiceStart | ServiceStop | ServiceChangeConfig);
             if (service == IntPtr.Zero)
             {
                 var error = Marshal.GetLastWin32Error();
@@ -87,6 +87,22 @@ public static class WindowsServiceStatusProbe
 
             try
             {
+                if (!ChangeServiceConfig(
+                        service,
+                        ServiceNoChange,
+                        startAutomatically ? ServiceAutoStart : ServiceDemandStart,
+                        ServiceNoChange,
+                        null,
+                        null,
+                        IntPtr.Zero,
+                        null,
+                        null,
+                        null,
+                        null))
+                {
+                    throw new System.ComponentModel.Win32Exception(Marshal.GetLastWin32Error(), "Could not update LucyServer automatic startup configuration.");
+                }
+
                 if (!QueryServiceStatusEx(service, 0, out var status, (uint)Marshal.SizeOf<ServiceStatusProcess>(), out _))
                 {
                     throw new System.ComponentModel.Win32Exception(Marshal.GetLastWin32Error(), "Could not query LucyServer state.");
@@ -160,6 +176,10 @@ public static class WindowsServiceStatusProbe
     private const uint ServiceQueryStatus = 0x0004;
     private const uint ServiceStart = 0x0010;
     private const uint ServiceStop = 0x0020;
+    private const uint ServiceChangeConfig = 0x0002;
+    private const uint ServiceNoChange = 0xffffffff;
+    private const uint ServiceAutoStart = 0x0002;
+    private const uint ServiceDemandStart = 0x0003;
     private const uint ServiceStopped = 1;
     private const uint ServiceStartPending = 2;
     private const uint ServiceStopPending = 3;
@@ -208,6 +228,21 @@ public static class WindowsServiceStatusProbe
     [DllImport("advapi32.dll", CharSet = CharSet.Unicode, SetLastError = true)]
     [return: MarshalAs(UnmanagedType.Bool)]
     private static extern bool StartService(IntPtr service, uint argumentCount, IntPtr arguments);
+
+    [DllImport("advapi32.dll", CharSet = CharSet.Unicode, SetLastError = true)]
+    [return: MarshalAs(UnmanagedType.Bool)]
+    private static extern bool ChangeServiceConfig(
+        IntPtr service,
+        uint serviceType,
+        uint startType,
+        uint errorControl,
+        string? binaryPathName,
+        string? loadOrderGroup,
+        IntPtr tagId,
+        string? dependencies,
+        string? serviceStartName,
+        string? password,
+        string? displayName);
 
     [DllImport("advapi32.dll", SetLastError = true)]
     [return: MarshalAs(UnmanagedType.Bool)]

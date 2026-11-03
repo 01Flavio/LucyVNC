@@ -23,7 +23,8 @@ internal static class Program
             new SyntheticCapture(),
             new RecordingInput(),
             args[2],
-            args[1]);
+            args[1],
+            interactiveDesktopAvailable: () => true);
         using (agent)
         {
             await agent.StartAsync();

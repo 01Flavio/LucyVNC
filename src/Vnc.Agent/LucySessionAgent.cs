@@ -2,6 +2,7 @@ using System.IO.Pipes;
 using System.Buffers.Binary;
 using System.Security.AccessControl;
 using System.Security.Principal;
+using System.Runtime.InteropServices;
 using System.Text;
 using System.Text.Json;
 using Vnc.Core;
@@ -38,6 +39,7 @@ public sealed class LucySessionAgent : IDisposable
     private readonly IRemoteInput _remoteInput;
     private readonly string _authorizedWorkerSid;
     private readonly TimeSpan _heartbeatTimeout;
+    private readonly Func<bool> _interactiveDesktopAvailable;
     private readonly object _sync = new();
     private CancellationTokenSource? _cancellation;
     private volatile CancellationTokenSource? _sessionCancellation;
@@ -54,7 +56,8 @@ public sealed class LucySessionAgent : IDisposable
         IRemoteInput remoteInput,
         string authorizedWorkerSid,
         string pipeName = DefaultPipeName,
-        TimeSpan? heartbeatTimeout = null)
+        TimeSpan? heartbeatTimeout = null,
+        Func<bool>? interactiveDesktopAvailable = null)
     {
         _screenCapture = screenCapture ?? throw new ArgumentNullException(nameof(screenCapture));
         _remoteInput = remoteInput ?? throw new ArgumentNullException(nameof(remoteInput));
@@ -63,6 +66,7 @@ public sealed class LucySessionAgent : IDisposable
         _authorizedWorkerSid = authorizedWorkerSid;
         _pipeName = pipeName;
         _heartbeatTimeout = heartbeatTimeout ?? TimeSpan.FromSeconds(30);
+        _interactiveDesktopAvailable = interactiveDesktopAvailable ?? InteractiveDesktop.IsAvailable;
     }
 
     public string PipeName => _pipeName;
@@ -283,7 +287,16 @@ public sealed class LucySessionAgent : IDisposable
                     break;
                 case "Heartbeat":
                     _lastHeartbeatUtc = DateTime.UtcNow;
-                    await WriteMessageAsync(stream, new { Type = "HeartbeatAck", Payload = new { Status = "Ready" } }, cancellationToken).ConfigureAwait(false);
+                    var desktopAvailable = _interactiveDesktopAvailable();
+                    if (!desktopAvailable)
+                    {
+                        _remoteInput.ReleaseAll();
+                    }
+
+                    await WriteMessageAsync(
+                        stream,
+                        new { Type = "HeartbeatAck", Payload = new { Status = desktopAvailable ? "Ready" : "DesktopUnavailable" } },
+                        cancellationToken).ConfigureAwait(false);
                     break;
                 case "ReleaseAll":
                     _remoteInput.ReleaseAll();
@@ -301,12 +314,28 @@ public sealed class LucySessionAgent : IDisposable
         var clientSid = ResolveConnectedClientSid(stream);
         if (!IsAuthorizedWorker(clientSid))
         {
-            await WriteMessageAsync(stream, new { Type = "HelloAck", Payload = new { Accepted = false } }, cancellationToken).ConfigureAwait(false);
+            await WriteMessageAsync(
+                stream,
+                new { Type = "HelloAck", Payload = new { Accepted = false, Status = "Unauthorized" } },
+                cancellationToken).ConfigureAwait(false);
             _sessionFailed = true;
             return false;
         }
 
-        await WriteMessageAsync(stream, new { Type = "HelloAck", Payload = new { Accepted = true, ProtocolVersion = 1 } }, cancellationToken).ConfigureAwait(false);
+        if (!_interactiveDesktopAvailable())
+        {
+            await WriteMessageAsync(
+                stream,
+                new { Type = "HelloAck", Payload = new { Accepted = false, Status = "DesktopUnavailable" } },
+                cancellationToken).ConfigureAwait(false);
+            _sessionFailed = true;
+            return false;
+        }
+
+        await WriteMessageAsync(
+            stream,
+            new { Type = "HelloAck", Payload = new { Accepted = true, ProtocolVersion = 1, Status = "Ready" } },
+            cancellationToken).ConfigureAwait(false);
         StatusChanged?.Invoke(this, "Agent accepted the IPC peer.");
         _lastHeartbeatUtc = DateTime.UtcNow;
         _sessionCancellation?.CancelAfter(Timeout.InfiniteTimeSpan);
@@ -315,6 +344,7 @@ public sealed class LucySessionAgent : IDisposable
 
     private async Task HandleFrameRequestAsync(Stream stream, JsonElement payload, CancellationToken cancellationToken)
     {
+        EnsureInteractiveDesktopAvailable();
         var width = OptionalDimension(payload, "Width");
         var height = OptionalDimension(payload, "Height");
         var frame = CaptureBoundedFrame(width, height);
@@ -369,6 +399,7 @@ public sealed class LucySessionAgent : IDisposable
 
     private Task HandleInputEventAsync(Stream stream, JsonElement payload, CancellationToken cancellationToken)
     {
+        EnsureInteractiveDesktopAvailable();
         var action = payload.GetProperty("Action").GetString();
         if (action == "Key")
         {
@@ -403,6 +434,15 @@ public sealed class LucySessionAgent : IDisposable
         }
 
         return string.Equals(sid, _authorizedWorkerSid, StringComparison.OrdinalIgnoreCase);
+    }
+
+    private void EnsureInteractiveDesktopAvailable()
+    {
+        if (!_interactiveDesktopAvailable())
+        {
+            _remoteInput.ReleaseAll();
+            throw new InvalidOperationException("The interactive Windows desktop is unavailable; remote capture and input are disabled.");
+        }
     }
 
     private static string? ResolveConnectedClientSid(NamedPipeServerStream server)
@@ -471,6 +511,57 @@ public sealed class LucySessionAgent : IDisposable
         }
 
         return value;
+    }
+
+    private static class InteractiveDesktop
+    {
+        private const uint DesktopReadObjects = 0x0001;
+        private const int UserObjectName = 2;
+
+        public static bool IsAvailable()
+        {
+            if (!OperatingSystem.IsWindows())
+            {
+                return false;
+            }
+
+            var desktop = OpenInputDesktop(0, false, DesktopReadObjects);
+            if (desktop == IntPtr.Zero)
+            {
+                return false;
+            }
+
+            try
+            {
+                var name = new StringBuilder(128);
+                if (!GetUserObjectInformation(desktop, UserObjectName, name, (uint)(name.Capacity * sizeof(char)), out _))
+                {
+                    return false;
+                }
+
+                return string.Equals(name.ToString(), "Default", StringComparison.OrdinalIgnoreCase);
+            }
+            finally
+            {
+                CloseDesktop(desktop);
+            }
+        }
+
+        [DllImport("user32.dll", SetLastError = true)]
+        private static extern IntPtr OpenInputDesktop(uint flags, [MarshalAs(UnmanagedType.Bool)] bool inherit, uint desiredAccess);
+
+        [DllImport("user32.dll", CharSet = CharSet.Unicode, SetLastError = true)]
+        [return: MarshalAs(UnmanagedType.Bool)]
+        private static extern bool GetUserObjectInformation(
+            IntPtr handle,
+            int index,
+            StringBuilder information,
+            uint length,
+            out uint needed);
+
+        [DllImport("user32.dll", SetLastError = true)]
+        [return: MarshalAs(UnmanagedType.Bool)]
+        private static extern bool CloseDesktop(IntPtr desktop);
     }
 
     private async Task HeartbeatWatchdogAsync(CancellationToken cancellationToken)

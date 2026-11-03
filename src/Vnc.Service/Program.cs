@@ -72,12 +72,15 @@ internal sealed class ServiceWorker : BackgroundService
 
     private readonly ILogger<ServiceWorker> _logger;
     private readonly ServiceConfigurationStore _configurationStore;
+    private readonly ServiceRuntimeStatusStore _runtimeStatusStore;
     private VncServerLifecycle? _lifecycle;
+    private ServiceConfiguration? _configuration;
 
     public ServiceWorker(ILogger<ServiceWorker> logger, ServiceConfigurationStore configurationStore)
     {
         _logger = logger;
         _configurationStore = configurationStore;
+        _runtimeStatusStore = new ServiceRuntimeStatusStore(configurationStore.RuntimeStatusPath);
     }
 
     protected override async Task ExecuteAsync(CancellationToken stoppingToken)
@@ -86,6 +89,7 @@ internal sealed class ServiceWorker : BackgroundService
         try
         {
             configuration = _configurationStore.LoadOrCreate();
+            _configuration = configuration;
             var diagnostic = ServiceSharingController.Evaluate(configuration);
             _logger.LogInformation(
                 "LucyVNC service state: {State}. {Diagnostic}",
@@ -98,6 +102,7 @@ internal sealed class ServiceWorker : BackgroundService
                                          or System.Text.Json.JsonException
                                          or InvalidOperationException)
         {
+            WriteRuntimeStatus("ConfigurationError", false, false, null, null, exception.Message);
             _logger.LogError(
                 "LucyVNC service could not load a safe configuration: {Reason}",
                 exception.Message);
@@ -106,6 +111,7 @@ internal sealed class ServiceWorker : BackgroundService
 
         if (ServiceSharingController.Evaluate(configuration).State == ServiceSharingState.Disabled)
         {
+            WriteRuntimeStatus("SharingDisabled", false, false, configuration.BindAddress, configuration.Port, "Persistent sharing is disabled in the protected configuration.");
             await Task.Delay(Timeout.InfiniteTimeSpan, stoppingToken).ConfigureAwait(false);
             return;
         }
@@ -113,7 +119,7 @@ internal sealed class ServiceWorker : BackgroundService
         string? password;
         try
         {
-            password = new ServiceCredentialStore().Load();
+            password = new ServiceCredentialStore(_configurationStore.CredentialPath).Load();
         }
         catch (FileNotFoundException)
         {
@@ -121,12 +127,14 @@ internal sealed class ServiceWorker : BackgroundService
         }
         catch (Exception exception) when (exception is IOException or UnauthorizedAccessException or System.Security.SecurityException or System.Security.Cryptography.CryptographicException or InvalidDataException)
         {
+            WriteRuntimeStatus("CredentialUnavailable", false, false, configuration.BindAddress, configuration.Port, exception.Message);
             _logger.LogError("LucyVNC service credential could not be loaded: {Reason}. No listener was opened.", exception.Message);
             return;
         }
 
         if (password is null)
         {
+            WriteRuntimeStatus("CredentialUnavailable", false, false, configuration.BindAddress, configuration.Port, "No valid protected VNC password is configured.");
             _logger.LogWarning(
                 "LucyVNC remote sharing is enabled but no valid protected VNC password is configured. No listener was opened.");
             return;
@@ -136,6 +144,8 @@ internal sealed class ServiceWorker : BackgroundService
         {
             LucyAgentClient? agentClient = null;
             VncServerLifecycle? lifecycle = null;
+            var agentAuthenticated = false;
+            WriteRuntimeStatus("WaitingForAgent", false, false, configuration.BindAddress, configuration.Port, "Waiting for the configured interactive-session Agent.");
             try
             {
                 var agentSid = string.IsNullOrWhiteSpace(configuration.AgentSid)
@@ -152,6 +162,8 @@ internal sealed class ServiceWorker : BackgroundService
                     Environment.GetEnvironmentVariable(ServiceHostBuilder.PipeNameEnvironmentVariable) ?? "LucyVNCAgent",
                     agentSid);
                 await agentClient.ConnectAsync(stoppingToken).ConfigureAwait(false);
+                agentAuthenticated = true;
+                WriteRuntimeStatus("AgentAuthenticated", true, false, configuration.BindAddress, configuration.Port, "Authenticated interactive Agent; starting RFB listener.");
 
                 lifecycle = new VncServerLifecycle(
                     CreateConnectionSettings(configuration, password),
@@ -164,11 +176,18 @@ internal sealed class ServiceWorker : BackgroundService
                     "LucyVNC authenticated RFB listener is ready on {BindAddress}:{Port}; desktop capture and input are provided by the verified interactive agent.",
                     configuration.BindAddress,
                     lifecycle.BoundPort);
+                WriteRuntimeStatus("Ready", true, true, configuration.BindAddress, lifecycle.BoundPort, "RFB listener is active and the authenticated interactive Agent is available.");
 
                 while (!stoppingToken.IsCancellationRequested)
                 {
                     await Task.Delay(TimeSpan.FromSeconds(5), stoppingToken).ConfigureAwait(false);
-                    await agentClient.SendHeartbeatAsync(stoppingToken).ConfigureAwait(false);
+                    if (!await agentClient.SendHeartbeatAsync(stoppingToken).ConfigureAwait(false))
+                    {
+                        WriteRuntimeStatus("DesktopUnavailable", true, false, configuration.BindAddress, lifecycle.BoundPort, "Interactive desktop is locked or unavailable; the RFB listener is closing.");
+                        throw new InvalidOperationException("The interactive desktop is locked or unavailable. The RFB listener will be closed.");
+                    }
+
+                    WriteRuntimeStatus("Ready", true, true, configuration.BindAddress, lifecycle.BoundPort, "RFB listener is active and the authenticated interactive Agent is available.");
                 }
             }
             catch (OperationCanceledException) when (stoppingToken.IsCancellationRequested)
@@ -191,6 +210,14 @@ internal sealed class ServiceWorker : BackgroundService
                                              or SocketException
                                              or Win32Exception)
             {
+                if (!stoppingToken.IsCancellationRequested)
+                {
+                    var state = exception.Message.Contains("desktop", StringComparison.OrdinalIgnoreCase)
+                        ? "DesktopUnavailable"
+                        : "AgentUnavailable";
+                    WriteRuntimeStatus(state, agentAuthenticated, false, configuration.BindAddress, configuration.Port, exception.Message);
+                }
+
                 _logger.LogWarning(
                     "LucyVNC sharing stopped because the authenticated interactive agent is unavailable: {Reason}. The listener will remain closed until the agent reconnects.",
                     exception.Message);
@@ -217,6 +244,48 @@ internal sealed class ServiceWorker : BackgroundService
             {
                 await Task.Delay(TimeSpan.FromSeconds(3), stoppingToken).ConfigureAwait(false);
             }
+        }
+
+        WriteRuntimeStatus("Stopped", false, false, configuration.BindAddress, configuration.Port, "LucyServer Worker stopped.");
+    }
+
+    public override async Task StopAsync(CancellationToken cancellationToken)
+    {
+        await base.StopAsync(cancellationToken).ConfigureAwait(false);
+        var configuration = _configuration;
+        WriteRuntimeStatus(
+            "Stopped",
+            false,
+            false,
+            configuration?.BindAddress,
+            configuration?.Port,
+            "LucyServer Worker stopped.");
+    }
+
+    private void WriteRuntimeStatus(
+        string state,
+        bool agentAuthenticated,
+        bool listenerActive,
+        string? bindAddress,
+        int? port,
+        string detail)
+    {
+        try
+        {
+            _runtimeStatusStore.Write(
+                new ServiceRuntimeStatus(
+                    state,
+                    agentAuthenticated,
+                    listenerActive,
+                    bindAddress,
+                    port,
+                    DateTimeOffset.UtcNow,
+                    detail),
+                _configuration?.AgentSid);
+        }
+        catch (Exception exception) when (exception is IOException or UnauthorizedAccessException or System.Security.SecurityException or System.Text.Json.JsonException)
+        {
+            _logger.LogWarning("Could not publish LucyServer runtime status: {Reason}", exception.Message);
         }
     }
 

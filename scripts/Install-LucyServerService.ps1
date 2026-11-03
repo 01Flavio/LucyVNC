@@ -1,6 +1,8 @@
 [CmdletBinding(SupportsShouldProcess = $true)]
 param(
-    [string]$ExecutablePath
+    [string]$ExecutablePath,
+    [ValidateSet('Automatic', 'Manual')]
+    [string]$StartupType = 'Automatic'
 )
 
 . (Join-Path $PSScriptRoot 'LucyServer.Service.Common.ps1')
@@ -32,7 +34,7 @@ New-Service `
     -Name $script:LucyServerServiceName `
     -DisplayName $script:LucyServerDisplayName `
     -BinaryPathName $quotedExecutablePath `
-    -StartupType Automatic `
+    -StartupType $StartupType `
     -Description 'LucyServer Worker. Desktop sharing requires a separately running interactive Agent; SCM-managed Agent launch is not implemented.' |
     Out-Null
 
@@ -52,4 +54,4 @@ Invoke-LvcScCommand -Arguments @(
     '1'
 )
 
-Write-Host "$script:LucyServerDisplayName was installed as Automatic and left stopped. Installation does not configure credentials or start an interactive Agent; service-managed desktop sharing is not available in this build."
+Write-Host "$script:LucyServerDisplayName was installed with startup type $StartupType and left stopped. Installation does not configure credentials or start an interactive Agent."

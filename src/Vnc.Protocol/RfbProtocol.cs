@@ -339,6 +339,8 @@ public static class RfbProtocol
             throw new ArgumentOutOfRangeException(nameof(rectangles));
         }
 
+        ValidateOutboundRectangles(rectangles);
+
         stream.WriteByte(0);
         stream.WriteByte(0);
         WriteUInt16(stream, (ushort)rectangles.Length);
@@ -586,6 +588,8 @@ public static class RfbProtocol
             throw new ArgumentOutOfRangeException(nameof(rectangles));
         }
 
+        ValidateOutboundRectangles(rectangles);
+
         var updateHeader = new byte[4];
         updateHeader[0] = 0;
         BinaryPrimitives.WriteUInt16BigEndian(updateHeader.AsSpan(2), (ushort)rectangles.Count);
@@ -642,6 +646,56 @@ public static class RfbProtocol
         if (width == 0 || height == 0 || (uint)x + width > framebufferWidth || (uint)y + height > framebufferHeight)
         {
             throw new InvalidDataException($"Framebuffer rectangle ({x},{y},{width},{height}) is outside screen {framebufferWidth}x{framebufferHeight}.");
+        }
+    }
+
+    private static void ValidateOutboundRectangles(IReadOnlyList<FramebufferRectangle> rectangles)
+    {
+        long totalRawBytes = 0;
+        foreach (var rectangle in rectangles)
+        {
+            ValidateOutboundRectangle(rectangle);
+            if (rectangle.Encoding == RawEncoding)
+            {
+                totalRawBytes = checked(totalRawBytes + rectangle.Data.Length);
+                if (totalRawBytes > MaximumFramebufferBytes)
+                {
+                    throw new InvalidDataException("Framebuffer update exceeds the configured size limit.");
+                }
+            }
+        }
+    }
+
+    private static void ValidateOutboundRectangle(FramebufferRectangle rectangle)
+    {
+        if (rectangle.Width == 0 || rectangle.Height == 0 ||
+            (uint)rectangle.X + rectangle.Width > ushort.MaxValue ||
+            (uint)rectangle.Y + rectangle.Height > ushort.MaxValue)
+        {
+            throw new InvalidDataException("Framebuffer rectangle dimensions or coordinates are outside the RFB range.");
+        }
+
+        var pixelCount = (long)rectangle.Width * rectangle.Height;
+        if (rectangle.Encoding == RawEncoding)
+        {
+            if (rectangle.Data.Length % pixelCount != 0 ||
+                rectangle.Data.Length / pixelCount is not (1 or 2 or 4))
+            {
+                throw new InvalidDataException("Raw framebuffer payload length does not match its rectangle dimensions.");
+            }
+        }
+        else if (rectangle.Encoding == CopyRectEncoding)
+        {
+            if (rectangle.Data.Length != 0 ||
+                (uint)rectangle.SourceX + rectangle.Width > ushort.MaxValue ||
+                (uint)rectangle.SourceY + rectangle.Height > ushort.MaxValue)
+            {
+                throw new InvalidDataException("CopyRect source coordinates or payload are invalid.");
+            }
+        }
+        else
+        {
+            throw new InvalidDataException($"Unsupported framebuffer encoding {rectangle.Encoding}.");
         }
     }
 

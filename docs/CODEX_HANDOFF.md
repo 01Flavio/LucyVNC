@@ -71,3 +71,47 @@ Corrigir o fluxo do Inno Setup para permitir `0.0.0.0` no modo confirmado, mante
 
 ## Próxima ação exata
 Executar `git add docs/CODEX_HANDOFF.md` e criar commit local de documentação; depois verificar `git status --short --branch`.
+
+## LucyVNC 2.4.3 — correção e validação
+
+### Objetivo
+Investigar transmissão parcial do framebuffer RFB em 1920×1080 e desconexões associadas à captura, cobrindo o caminho Viewer/Server, limites e serialização, com publicação e Setup 2.4.3. Não alegar interoperabilidade visual TightVNC sem teste real.
+
+### Estado e descobertas
+- Branch `feature/lucyvnc-2.4-separation`, HEAD inicial `33a5bc7`; worktree estava limpo.
+- Handshake anuncia as dimensões da captura inicial; o Server transmite retângulos Raw recortados às coordenadas/limites da requisição; o Viewer valida bounds e payload ao ler.
+- A captura GDI copia linhas com stride e normaliza pixels para BGRA.
+- O Agent limita a 1920 de largura e 1920×1080 pixels; a configuração do serviço permite 16 MiB por framebuffer. Um framebuffer 1920×1080×4 ocupa 8.294.400 bytes, portanto os limites examinados não explicam por si só a imagem parcial.
+- A captura subsequente ocorre após cada pedido incremental. Falhas da captura atualmente encerram a sessão via tratamento de erro do loop RFB.
+- Ainda não foi reproduzido o problema em um TightVNC Viewer real nem identificada uma causa ambiental conclusiva.
+
+### Alterações e validação
+- Adicionado teste Viewer↔Server end-to-end que reconstrói e compara byte-a-byte os 2.073.600 pixels de um framebuffer sintético 1920×1080 e confirma explicitamente os quatro cantos.
+- O teste completo de integração passou (8/8), incluindo o teste existente de atualização incremental de 64×64.
+- A serialização síncrona e assíncrona agora valida todos os retângulos antes de escrever cabeçalho/dados: dimensões/coords RFB, payload Raw por pixel, CopyRect e limite agregado de 64 MiB. Isso evita que payload interno malformado deixe o peer com uma mensagem parcial/desalinhada. Erros reais de escrita continuam propagados.
+- Testes direcionados de serialização (2/2) passaram para payload inválido e falha de transmissão simulada. A validação de payload e a reconstrução Full HD são regressões; a causa ambiental do relato original permanece sem reprodução confirmada.
+- Atualizado `docs/INTEROPERABILITY.md` separando a evidência sintética Full HD de interoperabilidade visual real; alterado o instalador para 2.4.3.
+- Restore: `dotnet restore LucyVNC.slnx` — passou.
+- Build: `dotnet build LucyVNC.slnx -c Release --no-restore` — passou, 0 warnings / 0 errors.
+- Testes: `dotnet test LucyVNC.slnx -c Release --no-build` — passou, 145/145 (Protocol 28, Server 24, Agent 7, Viewer 4, Integration 8, Infrastructure 42, Service 32).
+- Uma primeira tentativa paralela dos testes de Protocol e Integration disputou a escrita de `Vnc.Core.dll` e falhou com CS2012/MSB3026; os testes foram repetidos sequencialmente e passaram. Não foi alterado timeout nem desabilitado teste.
+- Publicados self-contained `win-x64`: Manager, Server Worker, Agent e Server UI em `artifacts\publish\{manager,server-worker,agent,server-ui}`.
+- Inno Setup 6.7.3 compilou `artifacts\LucyVNC-Setup-2.4.3-x64.exe` com sucesso. Tamanho: 200.942.399 bytes. SHA-256: `135A702E0D83BE0270C89FB615CC1A1F7E7EFFD39C533A5A81636F4162FFEEC8`.
+- Nenhum TightVNC Viewer foi usado nesta execução. A matriz mantém a evidência anterior, mas a nova transmissão Full HD foi comprovada apenas por Viewer/Server sintéticos. Captura GDI real, falha real de socket e imagem parcial original não foram reproduzidas.
+
+### Arquivos modificados
+- `src/Vnc.Protocol/RfbProtocol.cs`
+- `tests/Vnc.Protocol.Tests/UnitTest1.cs`
+- `tests/Vnc.Integration.Tests/UnitTest1.cs`
+- `installer/LucyVNC.iss`
+- `docs/INTEROPERABILITY.md`
+- `docs/CODEX_HANDOFF.md`
+
+### Commit
+- Pendente; criar commit local após verificação final do diff. Não fazer push.
+
+### Pendências ordenadas
+1. Reproduzir com captura física/GDI em 1920×1080 e correlacionar os logs do Server com uma falha real de transmissão; a causa original relatada não foi identificada conclusivamente.
+2. Executar TightVNC Viewer real contra o instalador 2.4.3 e validar imagem/atualizações; mouse/teclado também precisam de comprovação separada.
+3. Atualizar o hash/commit deste handoff após o commit local.
+- Não alterar firewall, instalar/iniciar serviços reais ou fazer push.

@@ -269,6 +269,65 @@ public class IntegrationTests
     }
 
     [Fact]
+    public async Task ViewerReconstructsEveryPixelOfAFullHdFramebuffer()
+    {
+        const ushort width = 1920;
+        const ushort height = 1080;
+        using var server = new VncServer(new ConnectionSettings
+        {
+            Port = 0,
+            BindAddress = "127.0.0.1",
+            Password = "password",
+            Width = width,
+            Height = height,
+        }, new PatternScreenCapture(), new RecordingInput());
+        server.Start();
+
+        await using var viewer = new VncViewerSession(new ConnectionSettings
+        {
+            Host = "127.0.0.1",
+            Port = server.BoundPort,
+            Password = "password",
+        });
+        var updateReceived = new TaskCompletionSource<FramebufferUpdatedEventArgs>(TaskCreationOptions.RunContinuationsAsynchronously);
+        viewer.FramebufferUpdated += (_, args) => updateReceived.TrySetResult(args);
+        var serverInit = await viewer.ConnectAsync();
+        Assert.Equal(width, serverInit.Width);
+        Assert.Equal(height, serverInit.Height);
+
+        using var cancellation = new CancellationTokenSource();
+        var run = viewer.RunAsync(cancellation.Token);
+        var update = await updateReceived.Task.WaitAsync(TimeSpan.FromSeconds(10));
+        var reconstructed = new byte[width * height * 4];
+        foreach (var rectangle in update.Rectangles)
+        {
+            Assert.True((uint)rectangle.X + rectangle.Width <= width);
+            Assert.True((uint)rectangle.Y + rectangle.Height <= height);
+            var rowBytes = rectangle.Width * 4;
+            for (var row = 0; row < rectangle.Height; row++)
+            {
+                var sourceOffset = row * rowBytes;
+                var destinationOffset = ((rectangle.Y + row) * width + rectangle.X) * 4;
+                Buffer.BlockCopy(rectangle.Data, sourceOffset, reconstructed, destinationOffset, rowBytes);
+            }
+        }
+
+        var expected = PatternScreenCapture.CreateExpectedFrame(width, height);
+        Assert.Equal(expected, reconstructed);
+        Assert.Equal(new byte[] { 0, 0, 0, 0 }, reconstructed[..4]);
+        var topRight = (width - 1) * 4;
+        Assert.Equal(new byte[] { 0x7f, 0, 0x7f, 0 }, reconstructed[topRight..(topRight + 4)]);
+        var bottomLeft = (height - 1) * width * 4;
+        Assert.Equal(new byte[] { 0, 0x37, 0x37, 0 }, reconstructed[bottomLeft..(bottomLeft + 4)]);
+        var bottomRight = ((height - 1) * width + width - 1) * 4;
+        Assert.Equal(new byte[] { 0x7f, 0x37, 0xb6, 0 }, reconstructed[bottomRight..(bottomRight + 4)]);
+
+        cancellation.Cancel();
+        await viewer.DisconnectAsync();
+        await run.WaitAsync(TimeSpan.FromSeconds(5));
+    }
+
+    [Fact]
     public async Task ViewerReconnectionWorksAfterUnexpectedServerShutdown()
     {
         using var server = new VncServer(new ConnectionSettings
@@ -511,6 +570,37 @@ public class IntegrationTests
 
         public void Dispose()
         {
+        }
+    }
+
+    private sealed class PatternScreenCapture : IScreenCapture
+    {
+        public ScreenFrame CapturePrimaryScreen(int width = 0, int height = 0)
+        {
+            var frame = new ScreenFrame(width, height, PixelFormat.Standard32Argb8888);
+            CreateExpectedFrame(width, height).CopyTo(frame.PixelData, 0);
+            return frame;
+        }
+
+        public void Dispose()
+        {
+        }
+
+        public static byte[] CreateExpectedFrame(int width, int height)
+        {
+            var pixels = new byte[width * height * 4];
+            for (var y = 0; y < height; y++)
+            {
+                for (var x = 0; x < width; x++)
+                {
+                    var offset = (y * width + x) * 4;
+                    pixels[offset] = (byte)x;
+                    pixels[offset + 1] = (byte)y;
+                    pixels[offset + 2] = (byte)(x + y);
+                }
+            }
+
+            return pixels;
         }
     }
 

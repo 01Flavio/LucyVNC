@@ -137,6 +137,31 @@ public class RfbProtocolTests
     }
 
     [Fact]
+    public async Task OutboundFramebufferUpdateRejectsMalformedPayloadBeforeWriting()
+    {
+        var rectangle = new FramebufferRectangle(0, 0, 2, 2, RfbProtocol.RawEncoding, new byte[15]);
+        using var syncStream = new MemoryStream();
+        using var asyncStream = new MemoryStream();
+
+        Assert.Throws<InvalidDataException>(() => RfbProtocol.WriteFramebufferUpdate(syncStream, rectangle));
+        await Assert.ThrowsAsync<InvalidDataException>(async () =>
+            await RfbProtocol.WriteFramebufferUpdateAsync(asyncStream, [rectangle], CancellationToken.None));
+
+        Assert.Empty(syncStream.ToArray());
+        Assert.Empty(asyncStream.ToArray());
+    }
+
+    [Fact]
+    public async Task OutboundFramebufferUpdateSurfacesTransmissionFailure()
+    {
+        await using var stream = new FailingWriteStream();
+        var rectangle = new FramebufferRectangle(0, 0, 1, 1, RfbProtocol.RawEncoding, new byte[4]);
+
+        await Assert.ThrowsAsync<IOException>(async () =>
+            await RfbProtocol.WriteFramebufferUpdateAsync(stream, [rectangle], CancellationToken.None));
+    }
+
+    [Fact]
     public void UpdateCountAndLengthsAreNetworkByteOrder()
     {
         using var stream = new MemoryStream();
@@ -165,5 +190,11 @@ public class RfbProtocolTests
     {
         public override int Read(byte[] buffer, int offset, int count) => base.Read(buffer, offset, Math.Min(count, 1));
         public override int Read(Span<byte> buffer) => base.Read(buffer[..Math.Min(buffer.Length, 1)]);
+    }
+
+    private sealed class FailingWriteStream : MemoryStream
+    {
+        public override ValueTask WriteAsync(ReadOnlyMemory<byte> buffer, CancellationToken cancellationToken = default) =>
+            ValueTask.FromException(new IOException("Simulated transmission failure."));
     }
 }

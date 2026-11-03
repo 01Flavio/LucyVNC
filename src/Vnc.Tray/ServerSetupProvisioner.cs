@@ -1,5 +1,6 @@
 using System.Security.Principal;
 using System.Security.Cryptography;
+using System.Net;
 using System.Windows.Forms;
 using Microsoft.Win32;
 using Vnc.Service;
@@ -17,7 +18,7 @@ internal static class ServerSetupProvisioner
         string? password = null;
         try
         {
-            if (args.Length != 7 ||
+            if (args.Length != 8 ||
                 !string.Equals(args[0], "--validate-setup", StringComparison.OrdinalIgnoreCase) &&
                 !string.Equals(args[0], "--provision-setup", StringComparison.OrdinalIgnoreCase))
             {
@@ -34,9 +35,11 @@ internal static class ServerSetupProvisioner
 
             if (string.Equals(args[0], "--validate-setup", StringComparison.OrdinalIgnoreCase))
             {
+                ValidatePortAvailability(configuration);
                 return 0;
             }
 
+            ValidatePortAvailability(configuration);
             var requestPath = ServiceConfigurationProvisioner.WriteProtectedRequest(
                 new ServiceConfigurationRequest(configuration, password));
             try
@@ -78,7 +81,8 @@ internal static class ServerSetupProvisioner
         if (!bool.TryParse(args[1], out var sharingEnabled) ||
             !int.TryParse(args[3], out var port) ||
             !bool.TryParse(args[5], out var startAutomatically) ||
-            !bool.TryParse(args[6], out agentAtLogon))
+            !bool.TryParse(args[6], out agentAtLogon) ||
+            !bool.TryParse(args[7], out var allInterfacesConfirmed))
         {
             throw new InvalidDataException("As opções de instalação do LucyVNC Server são inválidas.");
         }
@@ -98,6 +102,7 @@ internal static class ServerSetupProvisioner
         {
             RemoteSharingEnabled = sharingEnabled,
             BindAddress = args[2],
+            AllInterfacesConfirmed = allInterfacesConfirmed,
             Port = port,
             StartAutomatically = startAutomatically,
             AuthenticationRequired = true,
@@ -107,6 +112,30 @@ internal static class ServerSetupProvisioner
         };
         configuration.Validate();
         return configuration;
+    }
+
+    private static void ValidatePortAvailability(ServiceConfiguration configuration)
+    {
+        var path = new ServiceConfigurationStore().RuntimeStatusPath;
+        if (File.Exists(path))
+        {
+            var status = new ServiceRuntimeStatusStore(path).Read();
+            if (status is not null &&
+                status.ListenerActive &&
+                string.Equals(status.BindAddress, configuration.BindAddress, StringComparison.OrdinalIgnoreCase) &&
+                status.Port == configuration.Port)
+            {
+                return;
+            }
+        }
+
+        if (!ServiceNetworkBinding.IsPortAvailable(
+                IPAddress.Parse(configuration.BindAddress),
+                configuration.Port))
+        {
+            throw new InvalidDataException(
+                $"A porta TCP {configuration.Port} não está disponível em {configuration.BindAddress}. Verifique conflitos com outro servidor e escolha outra porta.");
+        }
     }
 
     private static void SetAgentStartupEnabled(bool enabled)

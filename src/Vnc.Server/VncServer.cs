@@ -35,9 +35,14 @@ public sealed class VncServer : IDisposable
     public bool IsRunning => _listenerTask is { IsCompleted: false };
     public int BoundPort => (_listener?.LocalEndpoint as IPEndPoint)?.Port ?? _settings.Port;
 
-    public static bool IsAllowedBindAddress(IPAddress address)
+    public static bool IsAllowedBindAddress(IPAddress address, bool allowAllInterfaces = false)
     {
         ArgumentNullException.ThrowIfNull(address);
+        if (address.Equals(IPAddress.Any))
+        {
+            return allowAllInterfaces;
+        }
+
         if (IPAddress.IsLoopback(address))
         {
             return true;
@@ -495,10 +500,10 @@ public sealed class VncServer : IDisposable
             throw new ArgumentException("Bind address must be an explicit IPv4 or IPv6 address.", nameof(settings));
         }
 
-        if (!IsAllowedBindAddress(bindAddress))
+        if (!IsAllowedBindAddress(bindAddress, settings.AllowAllInterfaces))
         {
             throw new ArgumentException(
-                "Only loopback, private/VPN, or link-local bind addresses are allowed.",
+                "Only loopback, private/VPN, link-local, or explicitly confirmed IPv4 wildcard bind addresses are allowed.",
                 nameof(settings));
         }
 

@@ -1,4 +1,5 @@
 using System.Globalization;
+using System.IO;
 using System.Net;
 using System.Text;
 using System.Text.Json;
@@ -33,7 +34,8 @@ public sealed record ComputerImportEntry(
     string? Message,
     SavedComputer? Computer,
     IReadOnlyList<SavedComputer> ExistingMatches,
-    ComputerImportAction SuggestedAction);
+    ComputerImportAction SuggestedAction,
+    string? Notice = null);
 
 public sealed class ComputerImportPlan
 {
@@ -51,6 +53,9 @@ public sealed record ComputerImportApplyReport(int Created, int Updated, int Ign
 public sealed class SavedComputerImportExportService
 {
     private const int NativeSchemaVersion = 1;
+    private const int MaximumImportFileBytes = 10 * 1024 * 1024;
+    private const int MaximumVncFileBytes = 1024 * 1024;
+    private const int MaximumVncFileCount = 1000;
     private static readonly string[] CsvHeaders =
     [
         "name", "hostname", "ipAddress", "port", "group", "isFavorite", "viewPreference",
@@ -73,6 +78,10 @@ public sealed class SavedComputerImportExportService
         if (string.IsNullOrWhiteSpace(json))
         {
             return FileError("The JSON import file is empty.");
+        }
+        if (Encoding.UTF8.GetByteCount(json) > MaximumImportFileBytes)
+        {
+            return FileError("The JSON import file exceeds the 10 MB size limit.");
         }
 
         List<(int Number, SavedComputer? Computer, string? Error)> rows;
@@ -100,6 +109,10 @@ public sealed class SavedComputerImportExportService
         if (string.IsNullOrWhiteSpace(csv))
         {
             return FileError("The CSV import file is empty.");
+        }
+        if (Encoding.UTF8.GetByteCount(csv) > MaximumImportFileBytes)
+        {
+            return FileError("The CSV import file exceeds the 10 MB size limit.");
         }
 
         List<IReadOnlyList<string>> rows;
@@ -184,6 +197,231 @@ public sealed class SavedComputerImportExportService
         }
 
         return await BuildPlanAsync(parsed, cancellationToken);
+    }
+
+    public async Task<ComputerImportPlan> PlanVncImportAsync(
+        string content,
+        string fileName,
+        CancellationToken cancellationToken = default)
+    {
+        ArgumentNullException.ThrowIfNull(content);
+        ArgumentException.ThrowIfNullOrWhiteSpace(fileName);
+        if (content.Length == 0)
+        {
+            return FileError("The VNC profile is empty.");
+        }
+
+        if (Encoding.UTF8.GetByteCount(content) > MaximumVncFileBytes)
+        {
+            return FileError("The VNC profile exceeds the 1 MB size limit.");
+        }
+
+        var parsed = ParseVncProfile(content, Path.GetFileNameWithoutExtension(fileName));
+        if (parsed.Computer is null)
+        {
+            return FileError(parsed.Error ?? "The VNC profile is invalid.");
+        }
+
+        var plan = await BuildPlanAsync([(1, parsed.Computer, null)], cancellationToken);
+        return WithNotices(plan, new Dictionary<int, string?> { [1] = parsed.Notice });
+    }
+
+    public async Task<ComputerImportPlan> PlanVncFilesImportAsync(
+        IEnumerable<string> filePaths,
+        CancellationToken cancellationToken = default)
+    {
+        ArgumentNullException.ThrowIfNull(filePaths);
+        var paths = filePaths.ToArray();
+        if (paths.Length == 0)
+        {
+            return FileError("Select at least one .vnc profile.");
+        }
+
+        if (paths.Length > MaximumVncFileCount)
+        {
+            return FileError($"A maximum of {MaximumVncFileCount} VNC profiles can be imported at once.");
+        }
+
+        var parsedRows = new List<(int Number, SavedComputer? Computer, string? Error)>();
+        var notices = new Dictionary<int, string?>();
+        long totalBytes = 0;
+        var recordNumber = 0;
+        foreach (var path in paths)
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            try
+            {
+                if (!string.Equals(Path.GetExtension(path), ".vnc", StringComparison.OrdinalIgnoreCase))
+                {
+                    parsedRows.Add((recordNumber, null, "Only .vnc profile files are supported in a multi-file VNC import."));
+                    continue;
+                }
+
+                var file = new FileInfo(path);
+                if (!file.Exists)
+                {
+                    parsedRows.Add((recordNumber, null, "The VNC profile does not exist."));
+                    continue;
+                }
+
+                if (file.Length > MaximumVncFileBytes)
+                {
+                    parsedRows.Add((recordNumber, null, "The VNC profile exceeds the 1 MB size limit."));
+                    continue;
+                }
+
+                totalBytes += file.Length;
+                if (totalBytes > MaximumImportFileBytes)
+                {
+                    parsedRows.Add((recordNumber, null, "The selected VNC profiles exceed the 10 MB total import limit."));
+                    break;
+                }
+
+                var content = await File.ReadAllTextAsync(path, cancellationToken);
+                var parsed = ParseVncProfile(content, Path.GetFileNameWithoutExtension(path));
+                parsedRows.Add((recordNumber, parsed.Computer, parsed.Error));
+                notices[recordNumber] = parsed.Notice;
+            }
+            catch (Exception exception) when (exception is IOException or UnauthorizedAccessException or ArgumentException)
+            {
+                parsedRows.Add((recordNumber, null, $"Could not read the VNC profile ({exception.GetType().Name})."));
+            }
+        }
+
+        var plan = await BuildPlanAsync(parsedRows, cancellationToken);
+        return WithNotices(plan, notices);
+    }
+
+    public async Task<ComputerImportPlan> PlanImportFilesAsync(
+        IEnumerable<string> filePaths,
+        CancellationToken cancellationToken = default)
+    {
+        ArgumentNullException.ThrowIfNull(filePaths);
+        var paths = filePaths.ToArray();
+        if (paths.Length == 0)
+        {
+            return FileError("Select at least one connection file.");
+        }
+        if (paths.Length > MaximumVncFileCount)
+        {
+            return FileError($"A maximum of {MaximumVncFileCount} connection files can be imported at once.");
+        }
+
+        var rows = new List<(int Number, SavedComputer? Computer, string? Error)>();
+        var notices = new Dictionary<int, string?>();
+        long totalBytes = 0;
+        var recordNumber = 0;
+        foreach (var path in paths)
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            try
+            {
+                var file = new FileInfo(path);
+                if (!file.Exists)
+                {
+                    recordNumber++;
+                    rows.Add((recordNumber, null, "The selected connection file does not exist."));
+                    continue;
+                }
+
+                var extension = Path.GetExtension(path);
+                var isVnc = string.Equals(extension, ".vnc", StringComparison.OrdinalIgnoreCase);
+                var isCsv = string.Equals(extension, ".csv", StringComparison.OrdinalIgnoreCase);
+                var isJson = string.Equals(extension, ".json", StringComparison.OrdinalIgnoreCase) ||
+                    string.Equals(extension, ".lucyvnc", StringComparison.OrdinalIgnoreCase);
+                if (!isVnc && !isCsv && !isJson)
+                {
+                    recordNumber++;
+                    rows.Add((recordNumber, null, "Supported file types are .vnc, .json, and .csv."));
+                    continue;
+                }
+
+                var sizeLimit = string.Equals(extension, ".vnc", StringComparison.OrdinalIgnoreCase)
+                    ? MaximumVncFileBytes
+                    : MaximumImportFileBytes;
+                if (file.Length > sizeLimit)
+                {
+                    recordNumber++;
+                    rows.Add((recordNumber, null, $"The selected file exceeds the {sizeLimit / (1024 * 1024)} MB size limit."));
+                    continue;
+                }
+                totalBytes += file.Length;
+                if (totalBytes > MaximumImportFileBytes)
+                {
+                    recordNumber++;
+                    rows.Add((recordNumber, null, "The selected files exceed the 10 MB total import limit."));
+                    break;
+                }
+
+                var content = await File.ReadAllTextAsync(path, cancellationToken);
+                if (isVnc)
+                {
+                    var parsed = ParseVncProfile(content, Path.GetFileNameWithoutExtension(path));
+                    recordNumber++;
+                    rows.Add((recordNumber, parsed.Computer, parsed.Error));
+                    notices[recordNumber] = parsed.Notice;
+                }
+                else
+                {
+                    var filePlan = isCsv
+                        ? await PlanCsvImportAsync(content, cancellationToken)
+                        : await PlanJsonImportAsync(content, cancellationToken);
+                    foreach (var entry in filePlan.Entries)
+                    {
+                        recordNumber++;
+                        rows.Add((
+                            recordNumber,
+                            entry.Computer,
+                            entry.Computer is null && entry.Status == ComputerImportStatus.Invalid ? entry.Message : null));
+                        notices[recordNumber] = entry.Notice;
+                    }
+                }
+            }
+            catch (Exception exception) when (exception is IOException or UnauthorizedAccessException or ArgumentException)
+            {
+                recordNumber++;
+                rows.Add((recordNumber, null, $"Could not read the selected connection file ({exception.GetType().Name})."));
+            }
+        }
+
+        var plan = await BuildPlanAsync(rows, cancellationToken);
+        return WithNotices(plan, notices);
+    }
+
+    public Task<ComputerImportPlan> PlanVncFolderImportAsync(
+        string folderPath,
+        CancellationToken cancellationToken = default)
+    {
+        ArgumentException.ThrowIfNullOrWhiteSpace(folderPath);
+        if (!Directory.Exists(folderPath))
+        {
+            return Task.FromResult(FileError("The selected folder does not exist."));
+        }
+
+        try
+        {
+            var files = Directory.EnumerateFiles(folderPath, "*.vnc", SearchOption.TopDirectoryOnly)
+                .OrderBy(path => path, StringComparer.OrdinalIgnoreCase)
+                .Take(MaximumVncFileCount + 1)
+                .ToArray();
+            if (files.Length == 0)
+            {
+                return Task.FromResult(FileError("The selected folder contains no .vnc profiles."));
+            }
+
+            return PlanVncFilesImportAsync(files, cancellationToken);
+        }
+        catch (Exception exception) when (exception is IOException or UnauthorizedAccessException)
+        {
+            return Task.FromResult(FileError($"Could not enumerate the selected folder ({exception.GetType().Name})."));
+        }
+    }
+
+    public async Task<string> ExportVncAsync(Guid computerId, CancellationToken cancellationToken = default)
+    {
+        var computer = await _store.GetComputerAsync(computerId, cancellationToken)
+            ?? throw new InvalidOperationException("The selected computer no longer exists.");
+        return ExportVnc(computer);
     }
 
     public async Task<ComputerImportApplyReport> ApplyImportAsync(
@@ -279,6 +517,241 @@ public sealed class SavedComputerImportExportService
             computers.Select(ToTransferRecord).ToArray());
         return JsonSerializer.Serialize(payload, JsonOptions);
     }
+
+    public static string ExportVnc(SavedComputer computer)
+    {
+        ArgumentNullException.ThrowIfNull(computer);
+        var host = computer.ConnectionHost;
+        var displayHost = IPAddress.TryParse(host, out var address) &&
+            address.AddressFamily == System.Net.Sockets.AddressFamily.InterNetworkV6
+                ? $"[{host}]"
+                : host;
+        if (ContainsLineBreakOrControl(computer.Name) || ContainsLineBreakOrControl(displayHost))
+        {
+            throw new InvalidDataException("This connection contains values that cannot be represented safely in a VNC profile.");
+        }
+
+        return string.Join("\r\n",
+            "[Connection]",
+            $"Host={displayHost}",
+            $"Port={computer.Port.ToString(CultureInfo.InvariantCulture)}",
+            $"ConnectionName={computer.Name}",
+            string.Empty);
+    }
+
+    private static (SavedComputer? Computer, string? Error, string? Notice) ParseVncProfile(string content, string fallbackName)
+    {
+        var values = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+        var unsupported = new SortedSet<string>(StringComparer.OrdinalIgnoreCase);
+        var credentialFound = false;
+        using var reader = new StringReader(content.TrimStart('\uFEFF'));
+        string? line;
+        while ((line = reader.ReadLine()) is not null)
+        {
+            var trimmed = line.Trim();
+            if (trimmed.Length == 0 || trimmed.StartsWith(';') || trimmed.StartsWith('#') ||
+                trimmed.StartsWith('[') && trimmed.EndsWith(']'))
+            {
+                continue;
+            }
+
+            var separator = trimmed.IndexOf('=');
+            if (separator <= 0)
+            {
+                unsupported.Add("malformed line");
+                continue;
+            }
+
+            var key = trimmed[..separator].Trim();
+            var value = trimmed[(separator + 1)..].Trim().Trim('"');
+            if (key.Length == 0 || key.Length > 128)
+            {
+                unsupported.Add("invalid key");
+                continue;
+            }
+
+            if (key.Contains("password", StringComparison.OrdinalIgnoreCase) ||
+                key.Contains("passwd", StringComparison.OrdinalIgnoreCase) ||
+                key.Contains("credential", StringComparison.OrdinalIgnoreCase))
+            {
+                credentialFound = true;
+                continue;
+            }
+
+            if (!values.TryAdd(key, value))
+            {
+                return (null, $"The VNC profile contains duplicate '{key}' options.", null);
+            }
+        }
+
+        var host = ReadVncValue(values, "Host");
+        var explicitPort = ReadVncValue(values, "Port");
+        if (string.IsNullOrWhiteSpace(host))
+        {
+            return (null, "The VNC profile must contain a Host option.", null);
+        }
+
+        if (!TryParseVncEndpoint(host, explicitPort, out var hostname, out var ipAddress, out var port))
+        {
+            return (null, "The VNC profile Host or Port is invalid. Supported hosts are DNS names or IP addresses.", null);
+        }
+
+        var name = ReadVncValue(values, "ConnectionName") ??
+            ReadVncValue(values, "Name") ??
+            fallbackName;
+        var group = ReadVncValue(values, "Group");
+        var candidate = CreateCandidate(name, hostname, ipAddress, port, group, favorite: false, viewPreference: "fit");
+        if (candidate.Computer is null)
+        {
+            return (null, candidate.Error ?? "The VNC profile is invalid.", null);
+        }
+
+        var supportedKeys = new HashSet<string>(
+            ["Host", "Port", "ConnectionName", "Name", "Group"],
+            StringComparer.OrdinalIgnoreCase);
+        foreach (var key in values.Keys.Where(key => !supportedKeys.Contains(key)))
+        {
+            unsupported.Add(key);
+        }
+
+        var notices = new List<string>();
+        if (credentialFound)
+        {
+            notices.Add("Credential option detected and ignored.");
+        }
+        if (unsupported.Count > 0)
+        {
+            notices.Add($"Unsupported options ignored: {string.Join(", ", unsupported)}.");
+        }
+
+        return (candidate.Computer, null, notices.Count == 0 ? null : string.Join(" ", notices));
+    }
+
+    private static bool TryParseVncEndpoint(
+        string value,
+        string? explicitPort,
+        out string? hostname,
+        out string? ipAddress,
+        out int port)
+    {
+        hostname = null;
+        ipAddress = null;
+        port = 5900;
+        value = value.Trim();
+        if (value.Length == 0)
+        {
+            return false;
+        }
+
+        if (value[0] == '[')
+        {
+            var closingBracket = value.IndexOf(']');
+            if (closingBracket <= 1)
+            {
+                return false;
+            }
+
+            var hostPart = value[1..closingBracket];
+            var suffix = value[(closingBracket + 1)..];
+            if (suffix.Length > 0)
+            {
+                if (!suffix.StartsWith("::", StringComparison.Ordinal) ||
+                    !int.TryParse(suffix[2..], NumberStyles.None, CultureInfo.InvariantCulture, out port))
+                {
+                    return false;
+                }
+            }
+            value = hostPart;
+        }
+        else if (!IPAddress.TryParse(value, out _))
+        {
+            var doubleSeparator = value.LastIndexOf("::", StringComparison.Ordinal);
+            if (doubleSeparator > 0)
+            {
+                var suffix = value[(doubleSeparator + 2)..];
+                if (int.TryParse(suffix, NumberStyles.None, CultureInfo.InvariantCulture, out var tcpPort))
+                {
+                    value = value[..doubleSeparator];
+                    if (explicitPort is null)
+                    {
+                        port = tcpPort;
+                    }
+                }
+            }
+            else if (value.Count(character => character == ':') == 1)
+            {
+                var separator = value.LastIndexOf(':');
+                var suffix = value[(separator + 1)..];
+                if (int.TryParse(suffix, NumberStyles.None, CultureInfo.InvariantCulture, out var display))
+                {
+                    if (explicitPort is not null)
+                    {
+                        value = value[..separator];
+                    }
+                    else if (display is >= 0 and <= 99)
+                    {
+                        port = 5900 + display;
+                        value = value[..separator];
+                    }
+                    else if (display is >= 100 and <= 65535)
+                    {
+                        port = display;
+                        value = value[..separator];
+                    }
+                }
+            }
+        }
+
+        if (explicitPort is not null &&
+            !int.TryParse(explicitPort, NumberStyles.None, CultureInfo.InvariantCulture, out port))
+        {
+            return false;
+        }
+        if (port is < 1 or > 65535)
+        {
+            return false;
+        }
+
+        value = value.Trim();
+        if (IPAddress.TryParse(value, out var parsedAddress))
+        {
+            if (parsedAddress.AddressFamily == System.Net.Sockets.AddressFamily.InterNetworkV6 &&
+                parsedAddress.IsIPv4MappedToIPv6)
+            {
+                parsedAddress = parsedAddress.MapToIPv4();
+            }
+            if (parsedAddress.AddressFamily == System.Net.Sockets.AddressFamily.InterNetworkV6)
+            {
+                ipAddress = parsedAddress.ToString();
+            }
+            else
+            {
+                ipAddress = parsedAddress.ToString();
+            }
+            return true;
+        }
+
+        if (!IsValidHost(value))
+        {
+            return false;
+        }
+        hostname = value;
+        return true;
+    }
+
+    private static string? ReadVncValue(IReadOnlyDictionary<string, string> values, string name) =>
+        values.TryGetValue(name, out var value) && !string.IsNullOrWhiteSpace(value) ? value.Trim() : null;
+
+    private static bool ContainsLineBreakOrControl(string value) =>
+        value.Any(character => char.IsControl(character));
+
+    private static ComputerImportPlan WithNotices(
+        ComputerImportPlan plan,
+        IReadOnlyDictionary<int, string?> notices) =>
+        new(plan.Entries.Select(entry =>
+            notices.TryGetValue(entry.RecordNumber, out var notice)
+                ? entry with { Notice = notice }
+                : entry).ToArray());
 
     public static string ExportCsv(IEnumerable<SavedComputer> computers)
     {

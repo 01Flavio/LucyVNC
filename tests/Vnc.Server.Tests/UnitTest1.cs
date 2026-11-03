@@ -44,6 +44,21 @@ public class ServerTests
     public void ServerBindAddressIsLimitedToLoopbackPrivateOrLinkLocalRanges(string address, bool expected) =>
         Assert.Equal(expected, VncServer.IsAllowedBindAddress(IPAddress.Parse(address)));
 
+    [Fact]
+    public void ServerWildcardBindRequiresExplicitConfirmation()
+    {
+        Assert.False(VncServer.IsAllowedBindAddress(IPAddress.Any));
+        Assert.True(VncServer.IsAllowedBindAddress(IPAddress.Any, allowAllInterfaces: true));
+        Assert.Throws<ArgumentException>(() => new VncServer(new ConnectionSettings
+        {
+            Port = 0,
+            BindAddress = IPAddress.Any.ToString(),
+            Password = "password",
+            Width = 64,
+            Height = 48,
+        }, new FakeScreenCapture(), new RecordingInput()));
+    }
+
     [Theory]
     [InlineData(RfbProtocol.Version3_3)]
     [InlineData(RfbProtocol.Version3_7)]

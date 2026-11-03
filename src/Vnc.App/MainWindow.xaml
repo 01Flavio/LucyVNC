@@ -190,8 +190,10 @@
                             <Button Content="Favorito" Style="{StaticResource CompactButton}" Click="ToggleFavorite_Click" />
                             <Button Content="Duplicar" Style="{StaticResource CompactButton}" Click="DuplicateComputer_Click" />
                             <Button Content="Excluir" Style="{StaticResource CompactButton}" Click="DeleteComputer_Click" />
-                            <Button Content="Importar conexões" Style="{StaticResource CompactButton}" Click="ImportConnections_Click" />
+                            <Button Content="Importar arquivo(s)" Style="{StaticResource CompactButton}" Click="ImportConnections_Click" />
+                            <Button Content="Importar pasta .vnc" Style="{StaticResource CompactButton}" Click="ImportVncFolder_Click" />
                             <Button Content="Exportar conexões" Style="{StaticResource CompactButton}" Click="ExportConnections_Click" />
+                            <Button Content="Exportar selecionada como .vnc" Style="{StaticResource CompactButton}" Click="ExportVncConnection_Click" />
                             <ComboBox x:Name="SortBox" Width="142" Margin="2,2,0,2" ToolTip="Ordenar computadores"
                                       SelectionChanged="SortBox_SelectionChanged">
                                 <ComboBoxItem Content="Nome" Tag="name" IsSelected="True" />

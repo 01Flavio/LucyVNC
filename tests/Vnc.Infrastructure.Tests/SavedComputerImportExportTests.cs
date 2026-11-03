@@ -146,6 +146,160 @@ public sealed class SavedComputerImportExportTests
     }
 
     [Fact]
+    public async Task TightVncProfileImportsEndpointAndNameButIgnoresCredentialsAndUnsupportedOptions()
+    {
+        using var database = new TestDatabase();
+        await database.Store.InitializeAsync();
+        var service = new SavedComputerImportExportService(database.Store);
+        const string profile = """
+            [Connection]
+            Host=desk.example.local
+            Port=5901
+            ConnectionName=Office desktop
+            Password=do-not-import-this
+            ViewOnly=1
+            Command=C:\unexpected\command.exe
+            """;
+
+        var plan = await service.PlanVncImportAsync(profile, "Office.vnc");
+
+        var entry = Assert.Single(plan.Entries);
+        Assert.Equal(ComputerImportStatus.Ready, entry.Status);
+        Assert.Equal("Office desktop", entry.Computer!.Name);
+        Assert.Equal("desk.example.local", entry.Computer.Hostname);
+        Assert.Equal(5901, entry.Computer.Port);
+        Assert.Null(entry.Computer.CredentialTarget);
+        Assert.Contains("Credential option detected and ignored.", entry.Notice, StringComparison.Ordinal);
+        Assert.Contains("Command, ViewOnly", entry.Notice, StringComparison.Ordinal);
+        Assert.DoesNotContain("do-not-import-this", entry.Notice, StringComparison.Ordinal);
+        Assert.DoesNotContain("unexpected", entry.Notice, StringComparison.OrdinalIgnoreCase);
+    }
+
+    [Theory]
+    [InlineData("[Connection]\nHost=desk.local:1\n", "desk.local", null, 5901)]
+    [InlineData("[Connection]\nHost=192.168.10.8::5903\n", null, "192.168.10.8", 5903)]
+    [InlineData("[Connection]\nHost=[fd00::12]\nPort=5904\n", null, "fd00::12", 5904)]
+    [InlineData("[Connection]\nHost=2001:db8::1\nPort=5905\n", null, "2001:db8::1", 5905)]
+    public async Task VncProfileSupportsCommonHostPortForms(string profile, string? hostname, string? ipAddress, int port)
+    {
+        using var database = new TestDatabase();
+        await database.Store.InitializeAsync();
+        var service = new SavedComputerImportExportService(database.Store);
+
+        var plan = await service.PlanVncImportAsync(profile, "from-file.vnc");
+
+        var computer = Assert.Single(plan.Entries).Computer!;
+        Assert.Equal(hostname, computer.Hostname);
+        Assert.Equal(ipAddress, computer.IpAddress);
+        Assert.Equal(port, computer.Port);
+    }
+
+    [Fact]
+    public async Task VncProfilesRejectInvalidHostsPortsAndDuplicateKeysWithoutExecutingLines()
+    {
+        using var database = new TestDatabase();
+        await database.Store.InitializeAsync();
+        var service = new SavedComputerImportExportService(database.Store);
+
+        var badHost = await service.PlanVncImportAsync("[Connection]\nHost=https://host.local\n", "bad.vnc");
+        var badPort = await service.PlanVncImportAsync("[Connection]\nHost=desk.local\nPort=70000\n", "bad-port.vnc");
+        var duplicate = await service.PlanVncImportAsync("[Connection]\nHost=desk.local\nHost=other.local\n", "duplicate.vnc");
+        var command = await service.PlanVncImportAsync("[Connection]\nHost=desk.local\nCommand=not executed\n", "command.vnc");
+
+        Assert.Equal(1, badHost.InvalidCount);
+        Assert.Equal(1, badPort.InvalidCount);
+        Assert.Equal(1, duplicate.InvalidCount);
+        Assert.Contains("Command", Assert.Single(command.Entries).Notice, StringComparison.Ordinal);
+        Assert.Equal("desk.local", Assert.Single(command.Entries).Computer!.Hostname);
+    }
+
+    [Fact]
+    public async Task VncBatchAndFolderImportsShareDuplicatePlanAndReportUnreadableFiles()
+    {
+        using var database = new TestDatabase();
+        await database.Store.InitializeAsync();
+        var folder = Path.Combine(Path.GetTempPath(), $"LucyVNC-vnc-import-{Guid.NewGuid():N}");
+        Directory.CreateDirectory(folder);
+        await File.WriteAllTextAsync(Path.Combine(folder, "one.vnc"), "[Connection]\nHost=desk.local\n");
+        await File.WriteAllTextAsync(Path.Combine(folder, "two.vnc"), "[Connection]\nHost=desk.local\n");
+        await File.WriteAllTextAsync(Path.Combine(folder, "bad.vnc"), "[Connection]\nPort=5900\n");
+        try
+        {
+            var service = new SavedComputerImportExportService(database.Store);
+            var plan = await service.PlanVncFolderImportAsync(folder);
+
+            Assert.Equal(1, plan.ValidCount);
+            Assert.Equal(1, plan.DuplicateCount);
+            Assert.Equal(1, plan.InvalidCount);
+            var largeProfile = await service.PlanVncImportAsync(
+                new string('x', 1024 * 1024 + 1),
+                "large.vnc");
+            Assert.Equal(1, largeProfile.InvalidCount);
+        }
+        finally
+        {
+            Directory.Delete(folder, recursive: true);
+        }
+    }
+
+    [Fact]
+    public async Task MixedMultiFileImportReplansDuplicatesAcrossVncAndNativeFiles()
+    {
+        using var database = new TestDatabase();
+        await database.Store.InitializeAsync();
+        var folder = Path.Combine(Path.GetTempPath(), $"LucyVNC-mixed-import-{Guid.NewGuid():N}");
+        Directory.CreateDirectory(folder);
+        var vncPath = Path.Combine(folder, "desk.vnc");
+        var jsonPath = Path.Combine(folder, "collection.lucyvnc.json");
+        await File.WriteAllTextAsync(vncPath, "[Connection]\nHost=desk.local\nPort=5900\n");
+        await File.WriteAllTextAsync(jsonPath, """
+            {"schemaVersion":1,"computers":[{"name":"Desk alias","hostname":"desk.local","port":5900}]}
+            """);
+        try
+        {
+            var service = new SavedComputerImportExportService(database.Store);
+            var plan = await service.PlanImportFilesAsync([vncPath, jsonPath]);
+
+            Assert.Equal(1, plan.ValidCount);
+            Assert.Equal(1, plan.DuplicateCount);
+            var report = await service.ApplyImportAsync(plan);
+            Assert.Equal(1, report.Created);
+            Assert.Single(await database.Store.GetComputersAsync());
+        }
+        finally
+        {
+            Directory.Delete(folder, recursive: true);
+        }
+    }
+
+    [Fact]
+    public async Task VncExportContainsOnlySupportedNonSecretConnectionFieldsAndCanBeReimported()
+    {
+        using var database = new TestDatabase();
+        await database.Store.InitializeAsync();
+        var saved = new SavedComputer(
+            Guid.NewGuid(), "Office desktop", "desk.local", null, 5900, "Work", true,
+            null, null, "fit", WindowsCredentialVault.CreateViewerTarget("desk.local", 5900));
+        await database.Store.SaveComputerAsync(saved);
+        var service = new SavedComputerImportExportService(database.Store);
+
+        var vnc = await service.ExportVncAsync(saved.Id);
+        Assert.DoesNotContain("credential", vnc, StringComparison.OrdinalIgnoreCase);
+        Assert.DoesNotContain("password", vnc, StringComparison.OrdinalIgnoreCase);
+        Assert.Contains("Host=desk.local", vnc, StringComparison.Ordinal);
+        Assert.Contains("Port=5900", vnc, StringComparison.Ordinal);
+        Assert.Contains("ConnectionName=Office desktop", vnc, StringComparison.Ordinal);
+
+        var plan = await service.PlanVncImportAsync(vnc, "exported.vnc");
+        Assert.Equal(ComputerImportStatus.Conflict, Assert.Single(plan.Entries).Status);
+        var imported = Assert.Single(plan.Entries).Computer!;
+        Assert.Equal(saved.Name, imported.Name);
+        Assert.Equal(saved.Port, imported.Port);
+        Assert.Null(imported.Group);
+        Assert.Null(imported.CredentialTarget);
+    }
+
+    [Fact]
     public async Task ImportReportSeparatesIgnoredConflictsFromRejectedRecords()
     {
         using var database = new TestDatabase();

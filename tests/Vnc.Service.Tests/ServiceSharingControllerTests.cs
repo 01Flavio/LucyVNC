@@ -14,7 +14,7 @@ public sealed class ServiceSharingControllerTests
 
         Assert.False(configuration.RemoteSharingEnabled);
         Assert.Equal(IPAddress.Loopback.ToString(), configuration.BindAddress);
-        Assert.Equal(5901, configuration.Port);
+        Assert.Equal(5900, configuration.Port);
         Assert.True(configuration.AuthenticationRequired);
         Assert.Equal(1, configuration.MaxSessions);
         Assert.Equal(ServiceSharingState.Disabled, ServiceSharingController.Evaluate(configuration).State);
@@ -56,6 +56,43 @@ public sealed class ServiceSharingControllerTests
             (ServiceConfiguration.SafeDefaults with { BindAddress = "0.0.0.0" }).Validate());
         Assert.Throws<InvalidDataException>(() =>
             (ServiceConfiguration.SafeDefaults with { Port = 65536 }).Validate());
+    }
+
+    [Fact]
+    public void WildcardBindRequiresExplicitConfirmationAndKeepsAuthenticationRequired()
+    {
+        var wildcard = ServiceConfiguration.SafeDefaults with
+        {
+            RemoteSharingEnabled = true,
+            BindAddress = IPAddress.Any.ToString(),
+        };
+        Assert.False(ServiceConfiguration.IsAllowedBindAddress(IPAddress.Any));
+        Assert.Throws<InvalidDataException>(wildcard.Validate);
+
+        var confirmed = wildcard with { AllInterfacesConfirmed = true };
+        Assert.True(ServiceConfiguration.IsAllowedBindAddress(IPAddress.Any, allowAllInterfaces: true));
+        confirmed.Validate();
+        Assert.True(confirmed.AuthenticationRequired);
+    }
+
+    [Fact]
+    public void NetworkBindingReportsPortConflictsAndEnumeratesOnlyUsableIpv4Adapters()
+    {
+        using var owner = new System.Net.Sockets.TcpListener(IPAddress.Loopback, 0);
+        owner.Start();
+        var occupiedPort = ((System.Net.IPEndPoint)owner.LocalEndpoint).Port;
+
+        Assert.False(ServiceNetworkBinding.IsPortAvailable(IPAddress.Loopback, occupiedPort));
+        owner.Stop();
+        Assert.True(ServiceNetworkBinding.IsPortAvailable(IPAddress.Loopback, occupiedPort));
+        Assert.All(ServiceNetworkBinding.GetAvailableIpv4Interfaces(), adapter =>
+        {
+            Assert.Equal(System.Net.Sockets.AddressFamily.InterNetwork, adapter.Address.AddressFamily);
+            Assert.True(ServiceConfiguration.IsAllowedBindAddress(adapter.Address));
+            Assert.False(IPAddress.IsLoopback(adapter.Address));
+            Assert.False(string.IsNullOrWhiteSpace(adapter.Name));
+            Assert.False(string.IsNullOrWhiteSpace(adapter.Type));
+        });
     }
 
     [Fact]

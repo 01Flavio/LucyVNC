@@ -67,9 +67,13 @@ internal static class ConnectionTransferDialog
             entry.Computer?.IpAddress ?? "",
             entry.Computer?.Port.ToString() ?? "",
             entry.Computer?.IsFavorite.ToString() ?? "",
-            entry.Message ?? (entry.ExistingMatches.Count == 0
-                ? ""
-                : $"Conflita com: {string.Join(", ", entry.ExistingMatches.Select(computer => computer.Name))}"))).ToArray();
+            string.Join(" ", new[]
+            {
+                entry.Message ?? (entry.ExistingMatches.Count == 0
+                    ? ""
+                    : $"Conflita com: {string.Join(", ", entry.ExistingMatches.Select(computer => computer.Name))}"),
+                entry.Notice,
+            }.Where(message => !string.IsNullOrWhiteSpace(message))))).ToArray();
         var grid = new DataGrid
         {
             AutoGenerateColumns = false,
@@ -163,23 +167,41 @@ internal static class ConnectionTransferDialog
 
     public static OpenFileDialog CreateImportFileDialog() => new()
     {
-        Title = "Importar conexões LucyVNC",
-        Filter = "JSON ou CSV|*.json;*.csv|JSON LucyVNC|*.json|CSV com cabeçalho|*.csv",
+        Title = "Importar conexões LucyVNC (.vnc, .lucyvnc.json, JSON ou CSV)",
+        Filter = "Perfis VNC, JSON ou CSV|*.vnc;*.json;*.lucyvnc.json;*.csv|Perfis VNC|*.vnc|JSON LucyVNC|*.json;*.lucyvnc.json|CSV com cabeçalho|*.csv",
         CheckFileExists = true,
-        Multiselect = false,
+        Multiselect = true,
+    };
+
+    public static SaveFileDialog CreateVncExportFileDialog(string computerName) => new()
+    {
+        Title = "Exportar perfil VNC",
+        Filter = "Perfil VNC|*.vnc",
+        DefaultExt = ".vnc",
+        AddExtension = true,
+        OverwritePrompt = true,
+        FileName = $"{SanitizeFileName(computerName)}.vnc",
     };
 
     public static SaveFileDialog CreateExportFileDialog(ConnectionExportFormat format) => new()
     {
         Title = "Exportar conexões LucyVNC",
         Filter = format == ConnectionExportFormat.Json
-            ? "JSON LucyVNC|*.json"
+            ? "Backup versionado LucyVNC|*.lucyvnc.json;*.json"
             : "CSV com cabeçalho|*.csv",
         DefaultExt = format == ConnectionExportFormat.Json ? ".json" : ".csv",
         AddExtension = true,
         OverwritePrompt = true,
-        FileName = format == ConnectionExportFormat.Json ? "LucyVNC-connections.json" : "LucyVNC-connections.csv",
+        FileName = format == ConnectionExportFormat.Json ? "LucyVNC-connections.lucyvnc.json" : "LucyVNC-connections.csv",
     };
+
+    private static string SanitizeFileName(string name)
+    {
+        var invalidCharacters = System.IO.Path.GetInvalidFileNameChars();
+        var sanitized = new string(name.Select(character =>
+            invalidCharacters.Contains(character) || char.IsControl(character) ? '_' : character).ToArray());
+        return string.IsNullOrWhiteSpace(sanitized) ? "LucyVNC-connection" : sanitized;
+    }
 
     public static Button CreateButton(string label, bool primary)
     {

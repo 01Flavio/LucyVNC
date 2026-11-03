@@ -3,6 +3,7 @@ using System.Diagnostics;
 using System.IO;
 using System.Net;
 using System.Runtime.InteropServices;
+using System.Text;
 using System.Windows;
 using System.Windows.Controls;
 using System.Windows.Input;
@@ -12,6 +13,7 @@ using System.Windows.Shapes;
 using System.Windows.Threading;
 using System.Windows.Interop;
 using Microsoft.Data.Sqlite;
+using Microsoft.Win32;
 using Path = System.IO.Path;
 using Vnc.Core;
 using Vnc.Infrastructure;
@@ -23,6 +25,7 @@ public partial class MainWindow : Window
 {
     private readonly LocalComputerStore _store = LocalComputerStore.CreateDefault();
     private readonly SavedComputerImportExportService _connectionsTransfer;
+    private readonly string[] _initialImportPaths;
     private readonly ICredentialVault _credentialVault = new WindowsCredentialVault();
     private readonly Dictionary<Guid, ViewerTabState> _sessions = new();
     private readonly HashSet<string> _connectingEndpoints = new(StringComparer.OrdinalIgnoreCase);
@@ -38,8 +41,9 @@ public partial class MainWindow : Window
     private ContextMenu? _trayContextMenu;
     private const int TrayCallbackMessage = 0x8001;
 
-    public MainWindow()
+    public MainWindow(IEnumerable<string>? initialImportPaths = null)
     {
+        _initialImportPaths = initialImportPaths?.ToArray() ?? [];
         _connectionsTransfer = new SavedComputerImportExportService(_store);
         InitializeComponent();
         DarkWindowChrome.Apply(this);
@@ -68,6 +72,10 @@ public partial class MainWindow : Window
             }
 
             await RefreshComputersAsync();
+            if (_initialImportPaths.Length > 0)
+            {
+                await ImportFilesAsync(_initialImportPaths);
+            }
         }
         catch (Exception exception)
         {
@@ -162,33 +170,38 @@ public partial class MainWindow : Window
             return;
         }
 
+        await ImportFilesAsync(picker.FileNames);
+    }
+
+    private async void ImportVncFolder_Click(object sender, RoutedEventArgs e)
+    {
+        var picker = new OpenFolderDialog
+        {
+            Title = "Selecionar pasta com perfis VNC",
+            Multiselect = false,
+        };
+        if (picker.ShowDialog(this) != true)
+        {
+            return;
+        }
+
         try
         {
-            var file = new FileInfo(picker.FileName);
-            if (file.Length > 10 * 1024 * 1024)
-            {
-                throw new InvalidDataException("O arquivo de importação excede o limite de 10 MB.");
-            }
+            await ImportPlanAsync(await _connectionsTransfer.PlanVncFolderImportAsync(picker.FolderName));
+        }
+        catch (Exception exception) when (
+            exception is IOException or UnauthorizedAccessException or InvalidDataException or
+                SqliteException or InvalidOperationException or ArgumentException)
+        {
+            MessageBox.Show(this, exception.Message, "Não foi possível importar os perfis VNC", MessageBoxButton.OK, MessageBoxImage.Error);
+        }
+    }
 
-            var content = await File.ReadAllTextAsync(picker.FileName);
-            var plan = string.Equals(file.Extension, ".csv", StringComparison.OrdinalIgnoreCase)
-                ? await _connectionsTransfer.PlanCsvImportAsync(content)
-                : await _connectionsTransfer.PlanJsonImportAsync(content);
-            var policy = ConnectionTransferDialog.ShowImportPreview(this, plan);
-            if (policy is null)
-            {
-                return;
-            }
-
-            var report = await _connectionsTransfer.ApplyImportAsync(plan, policy.Value);
-            await RefreshComputersAsync();
-            var rejected = plan.InvalidCount + plan.DuplicateCount;
-            MessageBox.Show(
-                this,
-                $"Importação concluída.\nCriados: {report.Created}\nAtualizados: {report.Updated}\nIgnorados: {report.Ignored}\nRejeitados (inválidos/duplicados): {rejected}",
-                "Resumo da importação",
-                MessageBoxButton.OK,
-                MessageBoxImage.Information);
+    private async Task ImportFilesAsync(IEnumerable<string> paths)
+    {
+        try
+        {
+            await ImportPlanAsync(await _connectionsTransfer.PlanImportFilesAsync(paths));
         }
         catch (Exception exception) when (
             exception is IOException or UnauthorizedAccessException or InvalidDataException or
@@ -196,6 +209,25 @@ public partial class MainWindow : Window
         {
             MessageBox.Show(this, exception.Message, "Não foi possível importar as conexões", MessageBoxButton.OK, MessageBoxImage.Error);
         }
+    }
+
+    private async Task ImportPlanAsync(ComputerImportPlan plan)
+    {
+        var policy = ConnectionTransferDialog.ShowImportPreview(this, plan);
+        if (policy is null)
+        {
+            return;
+        }
+
+        var report = await _connectionsTransfer.ApplyImportAsync(plan, policy.Value);
+        await RefreshComputersAsync();
+        var rejected = plan.InvalidCount + plan.DuplicateCount;
+        MessageBox.Show(
+            this,
+            $"Importação concluída.\nCriados: {report.Created}\nAtualizados: {report.Updated}\nIgnorados: {report.Ignored}\nRejeitados (inválidos/duplicados): {rejected}",
+            "Resumo da importação",
+            MessageBoxButton.OK,
+            MessageBoxImage.Information);
     }
 
     private async void ExportConnections_Click(object sender, RoutedEventArgs e)
@@ -229,7 +261,7 @@ public partial class MainWindow : Window
                 _ => _connectionsTransfer.ExportAllCsvAsync(),
             };
             var content = await contentTask;
-            await File.WriteAllTextAsync(picker.FileName, content);
+            await WriteAtomicallyAsync(picker.FileName, content);
             var exportedCount = options.Scope switch
             {
                 ConnectionExportScope.Selected => selectedComputers.Length,
@@ -247,6 +279,73 @@ public partial class MainWindow : Window
             exception is IOException or UnauthorizedAccessException or SqliteException or InvalidOperationException)
         {
             MessageBox.Show(this, exception.Message, "Não foi possível exportar as conexões", MessageBoxButton.OK, MessageBoxImage.Error);
+        }
+    }
+
+    private async void ExportVncConnection_Click(object sender, RoutedEventArgs e)
+    {
+        var selected = ComputerGrid.SelectedItems.OfType<SavedComputer>().ToArray();
+        if (selected.Length != 1)
+        {
+            MessageBox.Show(this, "Selecione exatamente uma conexão para exportar um perfil .vnc individual.", "Selecionar uma conexão",
+                MessageBoxButton.OK, MessageBoxImage.Information);
+            return;
+        }
+
+        var picker = ConnectionTransferDialog.CreateVncExportFileDialog(selected[0].Name);
+        if (picker.ShowDialog(this) != true)
+        {
+            return;
+        }
+
+        try
+        {
+            var content = await _connectionsTransfer.ExportVncAsync(selected[0].Id);
+            await WriteAtomicallyAsync(picker.FileName, content);
+            MessageBox.Show(
+                this,
+                "Perfil .vnc exportado com nome, endereço e porta. Grupos, favoritos, preferências não suportadas e credenciais não são incluídos.",
+                "Exportação .vnc concluída",
+                MessageBoxButton.OK,
+                MessageBoxImage.Information);
+        }
+        catch (Exception exception) when (
+            exception is IOException or UnauthorizedAccessException or SqliteException or InvalidOperationException or InvalidDataException)
+        {
+            MessageBox.Show(this, exception.Message, "Não foi possível exportar o perfil .vnc", MessageBoxButton.OK, MessageBoxImage.Error);
+        }
+    }
+
+    private static async Task WriteAtomicallyAsync(string destinationPath, string content)
+    {
+        var fullPath = Path.GetFullPath(destinationPath);
+        var directory = Path.GetDirectoryName(fullPath)
+            ?? throw new InvalidOperationException("The export destination must include a directory.");
+        var temporaryPath = Path.Combine(directory, $".{Path.GetFileName(fullPath)}.{Guid.NewGuid():N}.tmp");
+        try
+        {
+            var bytes = Encoding.UTF8.GetBytes(content);
+            await using (var stream = new FileStream(
+                temporaryPath,
+                FileMode.CreateNew,
+                FileAccess.Write,
+                FileShare.None,
+                bufferSize: 64 * 1024,
+                FileOptions.Asynchronous | FileOptions.WriteThrough))
+            {
+                await stream.WriteAsync(bytes);
+                await stream.FlushAsync();
+                stream.Flush(flushToDisk: true);
+            }
+
+            File.Move(temporaryPath, fullPath, overwrite: true);
+        }
+        finally
+        {
+            if (File.Exists(temporaryPath))
+            {
+                File.Delete(temporaryPath);
+            }
         }
     }
 

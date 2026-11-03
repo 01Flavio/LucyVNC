@@ -1,5 +1,6 @@
 using System.Diagnostics;
 using System.Net;
+using System.Net.NetworkInformation;
 using System.Security.Principal;
 using Microsoft.Win32;
 using Vnc.Service;
@@ -12,8 +13,13 @@ internal sealed class LucyVncServerConfigurationForm : Form
     private const string RunValueName = "LucyVNC.Server";
     private const string LocalSystemSid = "S-1-5-18";
     private readonly CheckBox _sharingEnabled = new() { Text = "Habilitar compartilhamento autenticado" };
-    private readonly TextBox _bindAddress = new() { Text = IPAddress.Loopback.ToString() };
-    private readonly NumericUpDown _port = new() { Minimum = 1, Maximum = 65535, Value = 5901 };
+    private readonly ComboBox _bindAddress = new() { DropDownStyle = ComboBoxStyle.DropDownList };
+    private readonly CheckBox _allInterfacesConfirmation = new()
+    {
+        Text = "Confirmo que 0.0.0.0 escutará em todas as interfaces IPv4 locais.",
+        AutoSize = true,
+    };
+    private readonly NumericUpDown _port = new() { Minimum = 1, Maximum = 65535, Value = 5900 };
     private readonly TextBox _windowsUser = new();
     private readonly TextBox _password = new() { UseSystemPasswordChar = true, MaxLength = 8 };
     private readonly CheckBox _serviceAutomatic = new() { Text = "Iniciar o serviço automaticamente com o Windows" };
@@ -45,7 +51,80 @@ internal sealed class LucyVncServerConfigurationForm : Form
         RefreshDiagnostics();
         _statusTimer.Tick += (_, _) => RefreshDiagnostics();
         _statusTimer.Start();
+        _bindAddress.SelectedIndexChanged += (_, _) => UpdateAllInterfacesConfirmation();
         FormClosed += (_, _) => _statusTimer.Dispose();
+    }
+
+    private void PopulateBindAddresses(string configuredAddress)
+    {
+        var options = new List<BindAddressOption>
+        {
+            new(IPAddress.Loopback.ToString(), "Somente este computador (127.0.0.1)", false),
+        };
+        foreach (var adapter in ServiceNetworkBinding.GetAvailableIpv4Interfaces())
+        {
+            options.Add(new BindAddressOption(
+                adapter.Address.ToString(),
+                $"{adapter.Name} — {adapter.Address} ({adapter.Type})",
+                false));
+        }
+
+        options.Add(new BindAddressOption(
+            IPAddress.Any.ToString(),
+            "Todas as interfaces IPv4 (LAN + VPN)",
+            true));
+        if (!options.Any(option => string.Equals(option.Address, configuredAddress, StringComparison.OrdinalIgnoreCase)))
+        {
+            options.Insert(options.Count - 1, new BindAddressOption(
+                configuredAddress,
+                $"Configurado, interface não detectada — {configuredAddress}",
+                IPAddress.TryParse(configuredAddress, out var parsed) && parsed.Equals(IPAddress.Any)));
+        }
+
+        _bindAddress.Items.Clear();
+        _bindAddress.Items.AddRange(options.Cast<object>().ToArray());
+        _bindAddress.DisplayMember = nameof(BindAddressOption.Display);
+        _bindAddress.SelectedItem = options.First(option =>
+            string.Equals(option.Address, configuredAddress, StringComparison.OrdinalIgnoreCase));
+    }
+
+    private void UpdateAllInterfacesConfirmation()
+    {
+        var isWildcard = _bindAddress.SelectedItem is BindAddressOption { IsWildcard: true };
+        _allInterfacesConfirmation.Enabled = isWildcard;
+        if (!isWildcard)
+        {
+            _allInterfacesConfirmation.Checked = false;
+        }
+    }
+
+    private void VerifyPortAvailability(IPAddress bindAddress, int port)
+    {
+        var configurationStore = new ServiceConfigurationStore();
+        var current = configurationStore.LoadExisting();
+        var runtimeStore = new ServiceRuntimeStatusStore(configurationStore.RuntimeStatusPath);
+        if (File.Exists(configurationStore.RuntimeStatusPath))
+        {
+            var runtime = runtimeStore.Read();
+            if (runtime is not null &&
+                runtime.ListenerActive &&
+                string.Equals(current.BindAddress, bindAddress.ToString(), StringComparison.OrdinalIgnoreCase) &&
+                current.Port == port)
+            {
+                return;
+            }
+        }
+
+        if (!ServiceNetworkBinding.IsPortAvailable(bindAddress, port))
+        {
+            throw new InvalidOperationException(
+                $"A porta TCP {port} não está disponível em {bindAddress}. Verifique se outro servidor já a está usando e escolha outra porta.");
+        }
+    }
+
+    private sealed record BindAddressOption(string Address, string Display, bool IsWildcard)
+    {
+        public override string ToString() => Display;
     }
 
     private void BuildLayout()
@@ -82,7 +161,8 @@ internal sealed class LucyVncServerConfigurationForm : Form
         root.Controls.Add(settings);
 
         AddSetting(settings, "Estado do compartilhamento", _sharingEnabled);
-        AddSetting(settings, "Endereço de bind (loopback ou IP privado/VPN)", _bindAddress);
+        AddSetting(settings, "Interface de rede", _bindAddress);
+        AddSetting(settings, "Confirmação multirrede", _allInterfacesConfirmation);
         AddSetting(settings, "Porta TCP", _port);
         AddSetting(settings, "Usuário Windows do Agent", _windowsUser);
         AddSetting(settings, "Nova senha VNC (8 caracteres ASCII)", _password);
@@ -100,7 +180,7 @@ internal sealed class LucyVncServerConfigurationForm : Form
         AddButton(actions, "Remover serviço...", UninstallServiceAsync);
         root.Controls.Add(new Label
         {
-            Text = "As credenciais são protegidas com DPAPI e ACL de SYSTEM/Administradores. VNC clássico não cifra o tráfego. O acesso fica limitado a loopback ou endereços privados/VPN.",
+            Text = "A opção todas as interfaces (0.0.0.0) inclui LAN e VPN, mas não abre portas no roteador nem altera firewall/roteamento. VNC clássico não cifra o tráfego; prefira VPN para acesso externo.",
             AutoSize = true,
             MaximumSize = new Size(650, 0),
             ForeColor = Color.DimGray,
@@ -145,8 +225,10 @@ internal sealed class LucyVncServerConfigurationForm : Form
         {
             var configuration = new ServiceConfigurationStore().LoadExisting();
             _sharingEnabled.Checked = configuration.RemoteSharingEnabled;
-            _bindAddress.Text = configuration.BindAddress;
+            PopulateBindAddresses(configuration.BindAddress);
             _port.Value = configuration.Port;
+            _allInterfacesConfirmation.Checked = configuration.AllInterfacesConfirmed;
+            UpdateAllInterfacesConfirmation();
             _serviceAutomatic.Checked = configuration.StartAutomatically;
             if (!string.IsNullOrWhiteSpace(configuration.AgentSid))
             {
@@ -156,7 +238,7 @@ internal sealed class LucyVncServerConfigurationForm : Form
             _agentAtLogon.Checked = _agentAtLogon.Enabled && IsAgentStartupEnabled();
         }
 
-        catch (Exception exception) when (exception is IOException or UnauthorizedAccessException or System.Security.SecurityException or System.Security.Principal.IdentityNotMappedException or System.Text.Json.JsonException or InvalidDataException)
+        catch (Exception exception) when (exception is IOException or UnauthorizedAccessException or NetworkInformationException or System.Security.SecurityException or System.Security.Principal.IdentityNotMappedException or System.Text.Json.JsonException or InvalidDataException)
         {
             _diagnostics.Text = $"Não foi possível carregar a configuração: {exception.Message}";
         }
@@ -189,10 +271,11 @@ internal sealed class LucyVncServerConfigurationForm : Form
         string? requestPath = null;
         try
         {
-            if (!IPAddress.TryParse(_bindAddress.Text.Trim(), out var bindAddress) ||
-                !ServiceConfiguration.IsAllowedBindAddress(bindAddress))
+            if (_bindAddress.SelectedItem is not BindAddressOption selectedBind ||
+                !IPAddress.TryParse(selectedBind.Address, out var bindAddress) ||
+                !ServiceConfiguration.IsAllowedBindAddress(bindAddress, selectedBind.IsWildcard && _allInterfacesConfirmation.Checked))
             {
-                throw new InvalidDataException("Informe loopback ou um IP privado/VPN/link-local. Endereços públicos não são aceitos.");
+                throw new InvalidDataException("Selecione loopback, uma interface IPv4 privada/VPN ou todas as interfaces com confirmação explícita.");
             }
 
             if (password.Length != 8 || password.Any(character => character > 0x7f))
@@ -209,9 +292,9 @@ internal sealed class LucyVncServerConfigurationForm : Form
                 throw new InvalidDataException("Para registrar o Agent no logon, o usuário autorizado precisa ser o usuário Windows desta sessão.");
             }
 
-            if (!IPAddress.IsLoopback(bindAddress) &&
+            if (selectedBind.IsWildcard &&
                 MessageBox.Show(
-                    $"O LucyVNC Server ficará disponível em {bindAddress}:{_port.Value}. VNC clássico não cifra o tráfego. Continue somente em uma rede confiável/VPN.",
+                    $"O LucyVNC Server escutará em todas as interfaces IPv4 locais na porta {_port.Value}, inclusive interfaces LAN e VPN presentes ou adicionadas no futuro. Isso não configura firewall, roteador ou UPnP. VNC clássico não cifra o tráfego. Confirme somente se o firewall/rede forem administrados adequadamente.",
                     "Confirmar compartilhamento",
                     MessageBoxButtons.YesNo,
                     MessageBoxIcon.Warning) != DialogResult.Yes)
@@ -219,10 +302,12 @@ internal sealed class LucyVncServerConfigurationForm : Form
                 return;
             }
 
+            VerifyPortAvailability(bindAddress, (int)_port.Value);
             var configuration = new ServiceConfiguration
             {
                 RemoteSharingEnabled = _sharingEnabled.Checked,
                 BindAddress = bindAddress.ToString(),
+                AllInterfacesConfirmed = selectedBind.IsWildcard && _allInterfacesConfirmation.Checked,
                 Port = (int)_port.Value,
                 StartAutomatically = _serviceAutomatic.Checked,
                 AuthenticationRequired = true,

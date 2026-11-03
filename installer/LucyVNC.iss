@@ -1,5 +1,5 @@
 #define AppName "LucyVNC Setup"
-#define AppVersion "2.4.0"
+#define AppVersion "2.4.1"
 #define AppPublisher "01Flavio"
 
 [Setup]
@@ -20,6 +20,7 @@ SolidCompression=yes
 WizardStyle=modern
 CloseApplications=yes
 RestartApplications=no
+ChangesAssociations=yes
 
 [Types]
 Name: "both"; Description: "LucyVNC Manager / Viewer and LucyVNC Server"
@@ -50,6 +51,12 @@ Name: "{autodesktop}\LucyVNC Server"; Filename: "{app}\Server\LucyVNC.Server.exe
 [Run]
 Filename: "{app}\LucyVNC.Manager.exe"; Description: "Abrir LucyVNC Manager"; Flags: postinstall nowait skipifsilent; Components: manager
 
+[Registry]
+Root: HKCR; Subkey: ".vnc\OpenWithProgids"; ValueType: none; ValueName: "LucyVNC.VncFile"; Components: manager; Flags: uninsdeletevalue
+Root: HKCR; Subkey: "LucyVNC.VncFile"; ValueType: string; ValueName: ""; ValueData: "LucyVNC VNC connection profile"; Components: manager; Flags: uninsdeletekey
+Root: HKCR; Subkey: "LucyVNC.VncFile\DefaultIcon"; ValueType: string; ValueName: ""; ValueData: "{app}\LucyVNC.Manager.exe,0"; Components: manager
+Root: HKCR; Subkey: "LucyVNC.VncFile\shell\open\command"; ValueType: string; ValueName: ""; ValueData: """{app}\LucyVNC.Manager.exe"" --import-vnc ""%1"""; Components: manager
+
 [Code]
 const
   PasswordEnvironmentVariable = 'LUCYVNC_SETUP_PASSWORD';
@@ -58,11 +65,15 @@ const
 var
   ServerConfigurationPage: TInputQueryWizardPage;
   ServerOptionsPage: TWizardPage;
+  NetworkModeCombo: TNewComboBox;
+  AllInterfacesCheck: TNewCheckBox;
+  NetworkInterfacesInfo: TNewStaticText;
   ShareEnabledCheck: TNewCheckBox;
   ServiceAutomaticCheck: TNewCheckBox;
   AgentAtLogonCheck: TNewCheckBox;
   InstallServiceCheck: TNewCheckBox;
   StartServiceCheck: TNewCheckBox;
+  NetworkInterfacesPath: string;
 
 function SetEnvironmentVariableW(Name, Value: string): Boolean;
   external 'SetEnvironmentVariableW@kernel32.dll stdcall';
@@ -104,7 +115,8 @@ begin
     Trim(ServerConfigurationPage.Values[1]) + ' ' +
     AddQuotes(Trim(ServerConfigurationPage.Values[2])) + ' ' +
     BooleanText(ServiceAutomaticCheck.Checked) + ' ' +
-    BooleanText(AgentAtLogonCheck.Checked);
+    BooleanText(AgentAtLogonCheck.Checked) + ' ' +
+    BooleanText(AllInterfacesCheck.Checked and (NetworkModeCombo.ItemIndex = 2));
 
   if not SetEnvironmentVariableW(PasswordEnvironmentVariable, ServerConfigurationPage.Values[3]) then
   begin
@@ -363,6 +375,86 @@ begin
     ResultCode) and (ResultCode = 0);
 end;
 
+function IsSetupPortAvailable(const BindAddress: string; Port: Integer): Boolean;
+var
+  ResultCode: Integer;
+  Script: string;
+  CommandLine: string;
+begin
+  if IsServiceInstalled then
+  begin
+    Result := True;
+    Exit;
+  end;
+
+  Script := '$listener = $null; try { $listener = [System.Net.Sockets.TcpListener]::new([System.Net.IPAddress]::Parse(''' +
+    BindAddress + '''), ' + IntToStr(Port) + '); $listener.Start(); exit 0 } catch { exit 1 } finally { if ($null -ne $listener) { $listener.Stop() } }';
+  CommandLine := '-NoProfile -NonInteractive -Command ' + AddQuotes(Script);
+  Result := Exec(
+    ExpandConstant('{sys}\WindowsPowerShell\v1.0\powershell.exe'),
+    CommandLine,
+    '',
+    SW_HIDE,
+    ewWaitUntilTerminated,
+    ResultCode) and (ResultCode = 0);
+end;
+
+function ReadAvailableNetworkInterfaces: string;
+var
+  ResultCode: Integer;
+  CommandLine: string;
+  Script: string;
+  Lines: TArrayOfString;
+  Index: Integer;
+begin
+  Result := 'A lista de interfaces não pôde ser consultada. Para interface específica, informe um IPv4 local privado/VPN no campo de endereço.';
+  NetworkInterfacesPath := ExpandConstant('{tmp}\LucyVNC-interfaces-' +
+    GetDateTimeString('yyyymmddhhnnss', '-', ':') + '.txt');
+  Script := '$ErrorActionPreference=''Stop''; Get-NetIPAddress -AddressFamily IPv4 -ErrorAction Stop | ' +
+    'Where-Object { $_.AddressState -eq ''Preferred'' } | ForEach-Object { ' +
+    '$adapter = Get-NetAdapter -InterfaceIndex $_.InterfaceIndex -ErrorAction SilentlyContinue; ' +
+    '''{0} | {1} | {2}'' -f $_.IPAddress, $adapter.Name, $adapter.InterfaceDescription } | ' +
+    'Set-Content -LiteralPath $env:LUCYVNC_NETWORK_INTERFACES_OUTPUT -Encoding UTF8';
+  CommandLine := '-NoProfile -NonInteractive -Command ' + AddQuotes(Script);
+  if SetEnvironmentVariableW('LUCYVNC_NETWORK_INTERFACES_OUTPUT', NetworkInterfacesPath) then
+  begin
+    try
+      if Exec(
+        ExpandConstant('{sys}\WindowsPowerShell\v1.0\powershell.exe'),
+        CommandLine,
+        '',
+        SW_HIDE,
+        ewWaitUntilTerminated,
+        ResultCode) and (ResultCode = 0) and FileExists(NetworkInterfacesPath) then
+      begin
+        if not LoadStringsFromFile(NetworkInterfacesPath, Lines) then
+        begin
+          Result := 'A lista de interfaces não pôde ser lida. Informe manualmente um IPv4 local privado/VPN.';
+        end;
+        if GetArrayLength(Lines) > 0 then
+        begin
+          Result := '';
+          for Index := 0 to GetArrayLength(Lines) - 1 do
+          begin
+            if Index > 0 then
+            begin
+              Result := Result + #13#10;
+            end;
+            Result := Result + Lines[Index];
+          end;
+        end;
+        DeleteFile(NetworkInterfacesPath);
+      end;
+    finally
+      SetEnvironmentVariableW('LUCYVNC_NETWORK_INTERFACES_OUTPUT', '');
+    end;
+  end;
+  if Result = '' then
+  begin
+    Result := 'Nenhum endereço IPv4 disponível foi encontrado. Você pode usar loopback ou informar um endereço privado/VPN local.';
+  end;
+end;
+
 procedure RemoveAgentStartupRegistryValues;
 begin
   RegDeleteValue(HKEY_CURRENT_USER, AgentStartupRegistryKey, 'LucyVNC.Server');
@@ -377,12 +469,12 @@ begin
     'LucyVNC Server Configuration',
     'Configure o LucyVNC Server independente',
     'A senha é enviada somente em memória ao provisionador e protegida antes de ser gravada. VNC clássico não cifra o tráfego.');
-  ServerConfigurationPage.Add('Endereço de bind (loopback ou IP privado/VPN)', False);
+  ServerConfigurationPage.Add('Endereço IPv4 da interface específica (quando escolhida)', False);
   ServerConfigurationPage.Add('Porta TCP', False);
   ServerConfigurationPage.Add('Usuário Windows autorizado para o Agent', False);
   ServerConfigurationPage.Add('Senha VNC (exatamente 8 caracteres ASCII)', True);
   ServerConfigurationPage.Values[0] := '127.0.0.1';
-  ServerConfigurationPage.Values[1] := '5901';
+  ServerConfigurationPage.Values[1] := '5900';
   ServerConfigurationPage.Values[2] := ExpandConstant('{username}');
 
   ServerOptionsPage := CreateCustomPage(
@@ -390,10 +482,39 @@ begin
     'LucyVNC Server Options',
     'Escolha o comportamento do compartilhamento e autorize separadamente a instalação do serviço.');
 
+  NetworkModeCombo := TNewComboBox.Create(ServerOptionsPage);
+  NetworkModeCombo.Parent := ServerOptionsPage.Surface;
+  NetworkModeCombo.Left := ScaleX(0);
+  NetworkModeCombo.Top := ScaleY(8);
+  NetworkModeCombo.Width := ScaleX(460);
+  NetworkModeCombo.Style := csDropDownList;
+  NetworkModeCombo.Items.Add('Somente este computador (127.0.0.1)');
+  NetworkModeCombo.Items.Add('Interface IPv4 específica (informe o endereço acima)');
+  NetworkModeCombo.Items.Add('Todas as interfaces IPv4 (0.0.0.0; LAN e VPN)');
+  NetworkModeCombo.ItemIndex := 0;
+
+  NetworkInterfacesInfo := TNewStaticText.Create(ServerOptionsPage);
+  NetworkInterfacesInfo.Parent := ServerOptionsPage.Surface;
+  NetworkInterfacesInfo.Left := ScaleX(0);
+  NetworkInterfacesInfo.Top := NetworkModeCombo.Top + ScaleY(28);
+  NetworkInterfacesInfo.Width := ScaleX(570);
+  NetworkInterfacesInfo.Height := ScaleY(68);
+  NetworkInterfacesInfo.AutoSize := False;
+  NetworkInterfacesInfo.WordWrap := True;
+  NetworkInterfacesInfo.Caption := 'Interfaces IPv4 detectadas:' + #13#10 + ReadAvailableNetworkInterfaces;
+
+  AllInterfacesCheck := TNewCheckBox.Create(ServerOptionsPage);
+  AllInterfacesCheck.Parent := ServerOptionsPage.Surface;
+  AllInterfacesCheck.Left := ScaleX(0);
+  AllInterfacesCheck.Top := NetworkInterfacesInfo.Top + NetworkInterfacesInfo.Height + ScaleY(2);
+  AllInterfacesCheck.Width := ScaleX(570);
+  AllInterfacesCheck.Caption := 'Confirmo o bind em todas as interfaces IPv4. Não altera firewall, roteador ou UPnP.';
+  AllInterfacesCheck.Checked := False;
+
   ShareEnabledCheck := TNewCheckBox.Create(ServerOptionsPage);
   ShareEnabledCheck.Parent := ServerOptionsPage.Surface;
   ShareEnabledCheck.Left := ScaleX(0);
-  ShareEnabledCheck.Top := ScaleY(8);
+  ShareEnabledCheck.Top := AllInterfacesCheck.Top + ScaleY(26);
   ShareEnabledCheck.Width := ScaleX(510);
   ShareEnabledCheck.Caption := 'Habilitar compartilhamento autenticado';
   ShareEnabledCheck.Checked := False;
@@ -452,6 +573,46 @@ begin
 
   if CurPageID = ServerOptionsPage.ID then
   begin
+    case NetworkModeCombo.ItemIndex of
+      0:
+        ServerConfigurationPage.Values[0] := '127.0.0.1';
+      1:
+        begin
+          if (Pos(':', Trim(ServerConfigurationPage.Values[0])) > 0) or
+            not IsAllowedBindAddress(Trim(ServerConfigurationPage.Values[0])) or
+            (CompareText(Trim(ServerConfigurationPage.Values[0]), '127.0.0.1') = 0) then
+          begin
+            MsgBox('Informe na página anterior o IPv4 privado/VPN da interface local desejada.', mbError, MB_OK);
+            Result := False;
+            Exit;
+          end;
+        end;
+      2:
+        begin
+          if not AllInterfacesCheck.Checked then
+          begin
+            MsgBox('O bind 0.0.0.0 exige confirmação explícita. Isso não abre o firewall nem configura o roteador.', mbError, MB_OK);
+            Result := False;
+            Exit;
+          end;
+          ServerConfigurationPage.Values[0] := '0.0.0.0';
+        end;
+    else
+    begin
+      Result := False;
+      Exit;
+    end;
+    end;
+
+    if not IsSetupPortAvailable(
+        Trim(ServerConfigurationPage.Values[0]),
+        StrToIntDef(Trim(ServerConfigurationPage.Values[1]), 0)) then
+    begin
+      MsgBox('A porta TCP selecionada não está disponível nesse endereço. Escolha outra porta ou encerre o aplicativo que a está usando.', mbError, MB_OK);
+      Result := False;
+      Exit;
+    end;
+
     if AgentAtLogonCheck.Checked and not IsCurrentWindowsAccount(Trim(ServerConfigurationPage.Values[2])) then
     begin
       MsgBox('O início do Agent no logon exige que o usuário Windows autorizado seja a conta atual. Desmarque a opção ou informe a conta atual.', mbError, MB_OK);

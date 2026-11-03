@@ -305,6 +305,7 @@ internal sealed class ServiceWorker : BackgroundService
         return new ConnectionSettings
         {
             BindAddress = configuration.BindAddress,
+            AllowAllInterfaces = configuration.AllInterfacesConfirmed,
             Port = configuration.Port,
             Password = password,
             MaxSessions = 1,

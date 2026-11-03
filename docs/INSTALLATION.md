@@ -1,6 +1,6 @@
 # Installation and operation
 
-## LucyVNC Setup 2.4
+## LucyVNC Setup 2.4.1
 
 Publish all four win-x64 components to isolated directories and compile the installer with Inno Setup 6.7.3:
 
@@ -13,16 +13,16 @@ dotnet publish "src/Vnc.Tray/Vnc.Tray.csproj" -c Release -r win-x64 --self-conta
 & "C:\Users\Zero\AppData\Local\Programs\Inno Setup 6\ISCC.exe" "installer\LucyVNC.iss"
 ```
 
-The output is `artifacts\LucyVNC-Setup-2.4.0-x64.exe`. The component page offers **LucyVNC Manager / Viewer**, **LucyVNC Server**, or both. Manager-only installation contains no Server Worker, Agent, tray/configuration executable, or Server service dependency.
+The output is `artifacts\LucyVNC-Setup-2.4.1-x64.exe`. The component page offers **LucyVNC Manager / Viewer**, **LucyVNC Server**, or both. Manager-only installation contains no Server Worker, Agent, tray/configuration executable, or Server service dependency.
 
 When Server is selected, the setup page asks for:
 
-- Sharing enabled/disabled, bind address (default `127.0.0.1`), and TCP port (default `5901`).
+- Sharing enabled/disabled, network mode (this computer, a specific local interface, or all IPv4 interfaces), and TCP port (default `5900`).
 - VNC password (exactly eight ASCII characters) and the authorized Windows user.
 - Automatic or manual service startup and optional tray/Agent startup at that user's logon.
 - Separate explicit consent to install or update the Windows service, and an optional choice to start sharing after setup.
 
-The setup validates the IP/network scope, port, password shape, and Windows account before continuing. Agent logon startup is restricted to the currently signed-in account; the selected account must match that session when this option is enabled. Service install/update is skipped unless Server is selected and the install-consent checkbox is accepted. Setup never adds firewall rules.
+The setup lists available IPv4 interface addresses and adapter names where available, validates the selected IP/network scope, port availability, password, and Windows account before continuing, and checks the port again immediately before protected provisioning. An existing LucyVNC Server listener using the same address/port is allowed during an update; other conflicts are rejected. Selecting all interfaces sets the listener to `0.0.0.0` and requires separate explicit confirmation. This listens on local IPv4 interfaces only; it does not configure firewall, routing, a router, or UPnP. VNC classic traffic is unencrypted, so use a trusted LAN or VPN and avoid exposing it directly to the Internet. Agent logon startup is restricted to the currently signed-in account; the selected account must match that session when this option is enabled. Service install/update is skipped unless Server is selected and the install-consent checkbox is accepted. Setup never adds firewall rules.
 
 The password is not placed in process arguments, installer logs, or plaintext files. During setup it is passed from the password control through the installer process environment to the Server provisioner. The provisioner clears the environment value, creates a DPAPI-protected request with a restricted ACL, and stores the durable credential as DPAPI LocalMachine ciphertext with SYSTEM/Administrators ACLs. The protected request is deleted after application. `LucyVNC.Server.exe` and its configuration interface can also be used later to manage the Server independently.
 
@@ -33,6 +33,8 @@ Upgrades retain the product AppId and protected settings. If the Server service 
 Launch `LucyVNC.Manager.exe`. The Manager is for outgoing VNC connections only: saved computers, favorites, recent connections, concurrent Viewer sessions, import, and export. It does not configure, install, start, stop, or supervise LucyVNC Server.
 
 The Manager stores non-secret connection data in `%LOCALAPPDATA%\LucyVNC\lucy.db`. Password remembering is opt-in and uses the signed-in user's Windows Credential Manager. JSON/CSV import and export contain no credentials.
+
+The Manager can open a `.vnc` file directly, import multiple selected files, or import top-level `.vnc` files from a selected folder. It supports INI-like profiles with `Host` plus optional `Port`, `ConnectionName`/`Name`, and `Group` key/value fields; common DNS/IP values, `host:display`, `host::tcp-port`, and bracketed IPv6 are recognized. It does not execute profile contents or import credentials; unsupported options are reported by key name only. Folder import is non-recursive and limited to 1,000 files, 1 MB per profile, and 10 MB total. Native JSON import requires `schemaVersion: 1`; JSON, CSV, and individual `.vnc` exports omit passwords and credentials. `.vnc` exports preserve only endpoint, port, and name.
 
 ## LucyVNC Server
 
@@ -47,10 +49,10 @@ The service may be configured Automatic or Manual. Automatic service start at bo
 1. Install only **LucyVNC Server** and select an authorized account that will log in interactively.
 2. Enable sharing, use a temporary eight-character password, keep bind at `127.0.0.1` for the first check, and consent to service installation.
 3. Optionally select Agent/tray startup at logon and start sharing after setup.
-4. Verify the tray reports the Agent authenticated and RFB listener ready. Connect a Viewer to `127.0.0.1:5901`; validate image refresh and non-destructive mouse/keyboard input.
+4. Verify the tray reports the Agent authenticated and RFB listener ready. Connect a Viewer to `127.0.0.1:5900`; validate image refresh and non-destructive mouse/keyboard input.
 5. Close the tray and confirm the Viewer session continues. Reopen Server Configuration and check that it reports the actual service/runtime status.
 6. Lock/unlock the interactive session and verify listener closure/recovery. Reboot and confirm automatic service start and Agent/tray startup after the authorized user logs in.
-7. Test a private LAN/VPN address only after the loopback test; configure firewall rules manually and narrowly if required.
+7. Test a private LAN/VPN address only after the loopback test. Use a specific interface for a single network or explicitly confirm `0.0.0.0` for simultaneous LAN/VPN listening; configure firewall rules manually and narrowly if required.
 
 These are manual acceptance steps, not results implied by build/test/publish. Do not install a real service or change firewall settings without authorization.
 

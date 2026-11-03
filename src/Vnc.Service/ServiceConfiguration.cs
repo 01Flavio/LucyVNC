@@ -7,7 +7,8 @@ public sealed record ServiceConfiguration
 {
     public bool RemoteSharingEnabled { get; init; }
     public string BindAddress { get; init; } = IPAddress.Loopback.ToString();
-    public int Port { get; init; } = 5901;
+    public bool AllInterfacesConfirmed { get; init; }
+    public int Port { get; init; } = 5900;
     public bool StartAutomatically { get; init; } = true;
     public bool AuthenticationRequired { get; init; } = true;
     public int MaxSessions { get; init; } = 1;
@@ -18,9 +19,9 @@ public sealed record ServiceConfiguration
 
     public void Validate()
     {
-        if (!IPAddress.TryParse(BindAddress, out var address) || !IsAllowedBindAddress(address))
+        if (!IPAddress.TryParse(BindAddress, out var address) || !IsAllowedBindAddress(address, AllInterfacesConfirmed))
         {
-            throw new InvalidDataException("The service bind address must be an explicit loopback, private, VPN, or link-local IP address.");
+            throw new InvalidDataException("The service bind address must be loopback, a private/VPN/link-local IP, or confirmed IPv4 wildcard.");
         }
 
         if (Port is < 1 or > 65535)
@@ -49,9 +50,14 @@ public sealed record ServiceConfiguration
         }
     }
 
-    public static bool IsAllowedBindAddress(IPAddress address)
+    public static bool IsAllowedBindAddress(IPAddress address, bool allowAllInterfaces = false)
     {
         ArgumentNullException.ThrowIfNull(address);
+        if (address.Equals(IPAddress.Any))
+        {
+            return allowAllInterfaces;
+        }
+
         if (IPAddress.IsLoopback(address))
         {
             return true;

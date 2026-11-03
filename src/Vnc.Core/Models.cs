@@ -155,5 +155,6 @@ public sealed class ConnectionSettings
     public int MaxFramesPerSecond { get; set; } = 20;
     public int FramebufferLimitBytes { get; set; } = 64 * 1024 * 1024;
     public string BindAddress { get; set; } = "127.0.0.1";
+    public bool AllowAllInterfaces { get; set; }
     public bool IsServerEnabled { get; set; }
 }

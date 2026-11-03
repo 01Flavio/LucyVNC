@@ -111,6 +111,40 @@ public sealed class ComponentSeparationTests
         Assert.DoesNotContain("ServerConfigurationPage.Values[0] := '127.0.0.1';", setup, StringComparison.Ordinal);
     }
 
+    [Fact]
+    public void InteractiveServerExecutablesDeclarePerMonitorV2DpiAwareness()
+    {
+        var root = FindRepositoryRoot();
+        var manifestPath = Path.Combine(root, "src", "Vnc.Platform.Windows", "LucyVNC.Dpi.manifest");
+        var manifest = XDocument.Load(manifestPath);
+        XNamespace settings2005 = "http://schemas.microsoft.com/SMI/2005/WindowsSettings";
+        XNamespace settings2016 = "http://schemas.microsoft.com/SMI/2016/WindowsSettings";
+
+        Assert.Equal("true/pm", manifest.Descendants(settings2005 + "dpiAware").Single().Value);
+        Assert.Equal("PerMonitorV2, PerMonitor", manifest.Descendants(settings2016 + "dpiAwareness").Single().Value);
+        var setup = File.ReadAllText(Path.Combine(root, "installer", "LucyVNC.iss"));
+        Assert.Contains("#define AppVersion \"2.4.4\"", setup, StringComparison.Ordinal);
+        var serviceProject = XDocument.Load(Path.Combine(root, "src", "Vnc.Service", "Vnc.Service.csproj"));
+        Assert.Contains(
+            serviceProject.Descendants("ApplicationManifest"),
+            element => element.Value == @"..\Vnc.Platform.Windows\LucyVNC.Dpi.manifest");
+        foreach (var projectName in new[] { "Vnc.Agent", "Vnc.Tray" })
+        {
+            var project = XDocument.Load(Path.Combine(root, "src", projectName, $"{projectName}.csproj"));
+            Assert.Contains(project.Descendants("ApplicationHighDpiMode"), element => element.Value == "PerMonitorV2");
+        }
+
+        var agentEntryPoint = File.ReadAllText(Path.Combine(root, "src", "Vnc.Agent", "Program.cs"));
+        Assert.True(agentEntryPoint.IndexOf("WindowsDpiAwareness.InitializePerMonitorV2();", StringComparison.Ordinal) <
+                    agentEntryPoint.IndexOf("EnsureInteractiveSession();", StringComparison.Ordinal));
+        var trayEntryPoint = File.ReadAllText(Path.Combine(root, "src", "Vnc.Tray", "Program.cs"));
+        Assert.True(trayEntryPoint.IndexOf("WindowsDpiAwareness.InitializePerMonitorV2();", StringComparison.Ordinal) <
+                    trayEntryPoint.IndexOf("ApplicationConfiguration.Initialize();", StringComparison.Ordinal));
+        var serviceEntryPoint = File.ReadAllText(Path.Combine(root, "src", "Vnc.Service", "Program.cs"));
+        Assert.True(serviceEntryPoint.IndexOf("WindowsDpiAwareness.InitializePerMonitorV2();", StringComparison.Ordinal) <
+                    serviceEntryPoint.IndexOf("ServiceHostBuilder.Create(args)", StringComparison.Ordinal));
+    }
+
     private static string FindRepositoryRoot()
     {
         for (var directory = new DirectoryInfo(AppContext.BaseDirectory); directory is not null; directory = directory.Parent)

@@ -13,6 +13,32 @@ namespace Vnc.Integration.Tests;
 public class IntegrationTests
 {
     [Fact]
+    public async Task WindowsDpiAwarenessCanBeInitializedInAnIsolatedProcess()
+    {
+        var hostPath = FindProcessHost();
+        using var process = new Process
+        {
+            StartInfo = new ProcessStartInfo
+            {
+                FileName = hostPath,
+                Arguments = "dpi-probe",
+                UseShellExecute = false,
+                RedirectStandardOutput = true,
+                RedirectStandardError = true,
+                CreateNoWindow = true,
+            },
+        };
+        Assert.True(process.Start());
+
+        var output = await process.StandardOutput.ReadToEndAsync().WaitAsync(TimeSpan.FromSeconds(5));
+        var error = await process.StandardError.ReadToEndAsync().WaitAsync(TimeSpan.FromSeconds(5));
+        await process.WaitForExitAsync().WaitAsync(TimeSpan.FromSeconds(5));
+
+        Assert.True(process.ExitCode == 0, error);
+        Assert.Equal("DPI:PER_MONITOR_V2", output.Trim());
+    }
+
+    [Fact]
     public async Task MultipleViewerSessionsKeepFramebufferAndInputIsolated()
     {
         var firstInput = new RecordingInput();

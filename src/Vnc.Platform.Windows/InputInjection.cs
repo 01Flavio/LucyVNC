@@ -13,6 +13,28 @@ public interface IRemoteInput : IDisposable
     void ReleaseAll();
 }
 
+public static class ScreenCoordinateMapper
+{
+    public static Point MapFramebufferPoint(
+        ushort x,
+        ushort y,
+        ushort framebufferWidth,
+        ushort framebufferHeight,
+        Rectangle screenBounds)
+    {
+        if (framebufferWidth == 0 || framebufferHeight == 0 || screenBounds.Width <= 0 || screenBounds.Height <= 0)
+        {
+            throw new ArgumentOutOfRangeException(nameof(framebufferWidth), "Framebuffer and screen dimensions must be positive.");
+        }
+
+        var remoteX = Math.Clamp((int)x, 0, framebufferWidth - 1);
+        var remoteY = Math.Clamp((int)y, 0, framebufferHeight - 1);
+        var targetX = screenBounds.Left + (int)((long)remoteX * (screenBounds.Width - 1) / Math.Max(1, framebufferWidth - 1));
+        var targetY = screenBounds.Top + (int)((long)remoteY * (screenBounds.Height - 1) / Math.Max(1, framebufferHeight - 1));
+        return new Point(targetX, targetY);
+    }
+}
+
 public static class RfbInputMapper
 {
     private static readonly IReadOnlyDictionary<uint, ushort> SpecialKeys = new Dictionary<uint, ushort>
@@ -117,11 +139,8 @@ public sealed class SendInputController : IRemoteInput
     public void ApplyPointerEvent(ushort x, ushort y, byte buttonMask)
     {
         ObjectDisposedException.ThrowIf(_disposed, this);
-        var remoteX = Math.Clamp((int)x, 0, Math.Max(0, _framebufferWidth - 1));
-        var remoteY = Math.Clamp((int)y, 0, Math.Max(0, _framebufferHeight - 1));
-        var targetX = _screenBounds.Left + (int)((long)remoteX * (_screenBounds.Width - 1) / Math.Max(1, _framebufferWidth - 1));
-        var targetY = _screenBounds.Top + (int)((long)remoteY * (_screenBounds.Height - 1) / Math.Max(1, _framebufferHeight - 1));
-        if (!SetCursorPos(targetX, targetY))
+        var target = ScreenCoordinateMapper.MapFramebufferPoint(x, y, _framebufferWidth, _framebufferHeight, _screenBounds);
+        if (!SetCursorPos(target.X, target.Y))
         {
             throw new Win32Exception(Marshal.GetLastWin32Error(), "Could not move the Windows pointer.");
         }

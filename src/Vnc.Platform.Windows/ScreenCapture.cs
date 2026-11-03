@@ -18,6 +18,11 @@ public interface IScreenCaptureBounds
 
 public sealed class GdiScreenCapture : IScreenCapture, IScreenCaptureBounds
 {
+    public GdiScreenCapture()
+    {
+        WindowsDpiAwareness.InitializePerMonitorV2();
+    }
+
     public (int Width, int Height) GetPrimaryScreenSize()
     {
         var bounds = System.Windows.Forms.Screen.PrimaryScreen?.Bounds

@@ -2,6 +2,7 @@ using System.Diagnostics;
 using System.Security.Principal;
 using System.Threading;
 using Microsoft.Win32;
+using Vnc.Platform.Windows;
 using Vnc.Service;
 
 namespace Vnc.Tray;
@@ -11,6 +12,7 @@ internal static class Program
     [STAThread]
     private static void Main(string[] args)
     {
+        WindowsDpiAwareness.InitializePerMonitorV2();
         ApplicationConfiguration.Initialize();
         if (args.Length > 0 &&
             (string.Equals(args[0], "--validate-setup", StringComparison.OrdinalIgnoreCase) ||

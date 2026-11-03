@@ -65,6 +65,36 @@ public class LucySessionAgentTests
     }
 
     [Fact]
+    public async Task LucySessionAgentPreservesAFullHdCaptureSizeThroughIpc()
+    {
+        var capture = new FakeScreenCapture(1920, 1080);
+        var input = new FakeRemoteInput();
+        var pipeName = $"LucyVNCAgentTest_{Guid.NewGuid():N}";
+        using var agent = new LucySessionAgent(capture, input, AuthorizedSid, pipeName, interactiveDesktopAvailable: () => true);
+        await agent.StartAsync();
+
+        using var client = new NamedPipeClientStream(".", pipeName, PipeDirection.InOut, PipeOptions.None);
+        var stream = (Stream)client;
+        await client.ConnectAsync();
+        await WriteMessageAsync(stream, new { Type = "Hello", Payload = new { Sid = AuthorizedSid } });
+        using (var helloAck = JsonDocument.Parse(await ReadMessageAsync(stream)))
+        {
+            Assert.True(helloAck.RootElement.GetProperty("Payload").GetProperty("Accepted").GetBoolean());
+        }
+
+        await WriteMessageAsync(stream, new { Type = "FrameRequest", Payload = new { Width = 0, Height = 0 } });
+        using (var frameResponse = JsonDocument.Parse(await ReadMessageAsync(stream)))
+        {
+            var payload = frameResponse.RootElement.GetProperty("Payload");
+            Assert.Equal(1920, payload.GetProperty("Width").GetInt32());
+            Assert.Equal(1080, payload.GetProperty("Height").GetInt32());
+            Assert.Equal(1920 * 1080 * 4, Convert.FromBase64String(payload.GetProperty("Data").GetString() ?? string.Empty).Length);
+        }
+
+        await agent.StopAsync();
+    }
+
+    [Fact]
     public async Task LucySessionAgentDoesNotTrustSidClaimFromHello()
     {
         var capture = new FakeScreenCapture();
@@ -209,11 +239,20 @@ public class LucySessionAgentTests
 
     private sealed class FakeScreenCapture : IScreenCapture, IScreenCaptureBounds
     {
-        public (int Width, int Height) GetPrimaryScreenSize() => (64, 48);
+        private readonly int _width;
+        private readonly int _height;
+
+        public FakeScreenCapture(int width = 64, int height = 48)
+        {
+            _width = width;
+            _height = height;
+        }
+
+        public (int Width, int Height) GetPrimaryScreenSize() => (_width, _height);
 
         public ScreenFrame CapturePrimaryScreen(int width = 0, int height = 0)
         {
-            var frame = new ScreenFrame(width == 0 ? 64 : width, height == 0 ? 48 : height, PixelFormat.Standard32Argb8888);
+            var frame = new ScreenFrame(width == 0 ? _width : width, height == 0 ? _height : height, PixelFormat.Standard32Argb8888);
             frame.Fill(10, 20, 30);
             return frame;
         }

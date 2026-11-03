@@ -29,6 +29,28 @@ public class ServerTests
     }
 
     [Theory]
+    [InlineData(0, 0, 0, 0)]
+    [InlineData(960, 540, 960, 540)]
+    [InlineData(1919, 1079, 1919, 1079)]
+    [InlineData(65535, 65535, 1919, 1079)]
+    public void FullHdPointerCoordinatesMapToPhysicalDesktopWithoutDpiScaling(
+        ushort framebufferX,
+        ushort framebufferY,
+        int expectedX,
+        int expectedY)
+    {
+        var mapped = ScreenCoordinateMapper.MapFramebufferPoint(
+            framebufferX,
+            framebufferY,
+            1920,
+            1080,
+            new System.Drawing.Rectangle(0, 0, 1920, 1080));
+
+        Assert.Equal(expectedX, mapped.X);
+        Assert.Equal(expectedY, mapped.Y);
+    }
+
+    [Theory]
     [InlineData("127.0.0.1", true)]
     [InlineData("10.2.3.4", true)]
     [InlineData("172.31.0.1", true)]

@@ -11,6 +11,7 @@ internal static class Program
 
     private static async Task Main(string[] args)
     {
+        WindowsDpiAwareness.InitializePerMonitorV2();
         EnsureInteractiveSession();
         if (args.Length > 0 && string.Equals(args[0], "--supervise", StringComparison.OrdinalIgnoreCase))
         {

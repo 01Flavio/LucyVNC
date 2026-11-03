@@ -118,3 +118,38 @@ Investigar transmissão parcial do framebuffer RFB em 1920×1080 e desconexões 
 
 ### Próxima ação exata
 Reproduzir primeiro o problema em uma sessão de teste com TightVNC Viewer e captura GDI real; depois correlacionar os logs do Server. Não repetir restore/build/test/publish, que já passaram para `62bcc0b`, salvo se o código for alterado.
+
+## LucyVNC 2.4.4 — corrigir DPI na captura (em andamento)
+
+### Objetivo
+Corrigir virtualização de DPI observada em Windows 11 a 150%, fazendo o Agent anunciar e capturar dimensões físicas sem multiplicadores fixos; preservar coordenadas de entrada e gerar `LucyVNC-Setup-2.4.4-x64.exe`.
+
+### Investigação inicial
+- Worktree limpo no commit `ecd662c`; sem manifest de DPI encontrado.
+- `GdiScreenCapture` obtém dimensões via `Screen.PrimaryScreen.Bounds`, depois usa `Graphics.CopyFromScreen` e copia linhas via `Bitmap.LockBits`/stride. Ambas as APIs podem refletir coordenadas virtualizadas se o processo não for DPI-aware.
+- O processo responsável pela captura é `LucyVNC.Agent`; o Worker pede frames via IPC. A bandeja/Configuration inicializa WinForms e o Worker inicia um host, portanto a awareness deve estar no manifesto e ser confirmada antes da inicialização de cada processo.
+- `SendInputController` também usa `Screen.PrimaryScreen.Bounds`; com awareness física, o mapeamento framebuffer→desktop deve continuar proporcional, sem multiplicar coordenadas pelo fator de escala.
+- Causa raiz confirmada: não havia DPI awareness declarada nem inicializada nesses processos. Em 150%, Windows virtualizava para coordenadas lógicas (1280×720) a captura de uma tela física 1920×1080.
+
+### Próxima ação exata
+Implementar Per-Monitor V2 no Agent/Worker/Server UI, confirmar dimensões e coordenadas físicas, testar o frame Full HD no IPC do Agent, e validar a captura GDI real se o desktop permitir.
+
+### Progresso da implementação
+- Configurado `PerMonitorV2` no manifesto do Worker, e via `ApplicationHighDpiMode` nos executáveis WinForms Agent e Server UI; os entry points também chamam `WindowsDpiAwareness.InitializePerMonitorV2()` antes do acesso a captura/WinForms. Falha de inicialização não é ignorada, exceto quando o contexto existente já é PMv2.
+- `GdiScreenCapture` verifica a awareness antes de consultar bounds. As dimensões vêm de `Screen.PrimaryScreen.Bounds`, sem fator fixo; `Graphics.CopyFromScreen` e `Bitmap.LockBits` usam as dimensões físicas sob PMv2. O mapeamento de mouse continua proporcional ao retângulo físico informado pelo Windows. A awareness não é imposta no construtor compartilhado de `SendInputController`, para não alterar o contexto de DPI de chamadores WPF; o Agent define PMv2 antes de instanciar captura/input.
+- Build Release passou sem warnings/errors após usar `ApplicationHighDpiMode` para evitar o warning WFAC010 de manifests DPI manuais em projetos WinForms.
+- Regressões focadas passaram: Agent 8/8 (inclui Full HD no IPC), mapeamento de coordenadas 4/4 e configuração dos executáveis 1/1; integração passou 9/9, incluindo inicialização PMv2 em processo isolado.
+- Captura real validada no desktop disponível: `GetDpiForSystem=144` (150%), GDI retornou 1920×1080 e uma sessão RFB Viewer/Server local recebeu um Raw completo 1920×1080 com 8.294.400 bytes. Nenhum pixel foi salvo nem exibido; não foi testado com TightVNC nesta etapa.
+- Na primeira execução do probe, a senha de teste excedia 8 caracteres; corrigida para uma senha válida de teste e o probe passou. Duas instâncias Agent/Manager, Server UI e Worker observadas no desktop antes/depois eram preexistentes; não foram iniciadas, paradas nem alteradas por esta tarefa.
+- A primeira suíte completa revelou que a inicialização PMv2 dentro do construtor compartilhado de `SendInputController` falha no processo de testes WPF já inicializado com outro contexto. Removida a mudança global do construtor: PMv2 continua aplicado antes de qualquer UI/captura nos entry points do Agent/Worker/Tray, e o construtor de captura mantém verificação. Uma segunda suíte teve falha transitória de EOF em um teste de named pipe do Agent; o projeto do Agent passou isoladamente e a suíte completa seguinte passou sem alterações de timeout.
+
+### Próxima ação exata
+Restore: `dotnet restore LucyVNC.slnx` passou. Build: `dotnet build LucyVNC.slnx -c Release --no-restore` passou sem warnings/errors. A suíte final passou 152/152 (Protocol 28, Server 28, Agent 8, Viewer 4, Integration 9, Infrastructure 42, Service 33).
+
+Publicados Manager, Worker, Agent e Server UI self-contained `win-x64`. Inno Setup 6.7.3 compilou `artifacts\LucyVNC-Setup-2.4.4-x64.exe` (200.943.542 bytes; SHA-256 `BB68B243717AA8968191B09F5F72FE5FF6DD2E49D45F5D16E5554F5E18D2D23A`).
+
+Captura real/GDI e RFB foram testados no monitor atual a 144 DPI (150%): dimensões 1920×1080 e um Raw completo de 8.294.400 bytes chegou ao Viewer local. O frame não foi salvo nem visualizado. As escalas 100%, 125%, 175% e 200% não foram testadas individualmente. TightVNC Viewer real, SendInput físico e o Worker/Agent via serviço SCM não foram testados nesta alteração.
+
+Commits locais: implementação `pendente`; handoff final será separado. Worktree deve ser verificado limpo após commit; sem push e sem operações sobre os serviços/processos existentes.
+
+Arquivos alterados: `src/Vnc.Platform.Windows/LucyVNC.Dpi.manifest`, `WindowsDpiAwareness.cs`, `ScreenCapture.cs`, `InputInjection.cs`; `src/Vnc.Agent/Program.cs`, `Vnc.Agent.csproj`; `src/Vnc.Service/Program.cs`, `Vnc.Service.csproj`; `src/Vnc.Tray/Program.cs`, `Vnc.Tray.csproj`; `tests/Vnc.Agent.Tests/LucySessionAgentTests.cs`, `tests/Vnc.Server.Tests/UnitTest1.cs`, `tests/Vnc.Service.Tests/ComponentSeparationTests.cs`, `tests/Vnc.ProcessHost/Program.cs`, `Vnc.ProcessHost.csproj`, `tests/Vnc.Integration.Tests/UnitTest1.cs`; `installer/LucyVNC.iss`; `docs/CODEX_HANDOFF.md`.

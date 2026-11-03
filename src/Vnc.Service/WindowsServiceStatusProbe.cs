@@ -62,7 +62,7 @@ public static class WindowsServiceStatusProbe
     {
         if (!OperatingSystem.IsWindows())
         {
-            throw new PlatformNotSupportedException("LucyServer service control is available only on Windows.");
+            throw new PlatformNotSupportedException("LucyVNC Server service control is available only on Windows.");
         }
 
         var manager = OpenSCManager(null, null, ScManagerConnect);
@@ -82,7 +82,7 @@ public static class WindowsServiceStatusProbe
                     return false;
                 }
 
-                throw new System.ComponentModel.Win32Exception(error, "Could not open LucyServer for restart.");
+                throw new System.ComponentModel.Win32Exception(error, "Could not open LucyVNC Server for restart.");
             }
 
             try
@@ -100,12 +100,12 @@ public static class WindowsServiceStatusProbe
                         null,
                         null))
                 {
-                    throw new System.ComponentModel.Win32Exception(Marshal.GetLastWin32Error(), "Could not update LucyServer automatic startup configuration.");
+                    throw new System.ComponentModel.Win32Exception(Marshal.GetLastWin32Error(), "Could not update LucyVNC Server automatic startup configuration.");
                 }
 
                 if (!QueryServiceStatusEx(service, 0, out var status, (uint)Marshal.SizeOf<ServiceStatusProcess>(), out _))
                 {
-                    throw new System.ComponentModel.Win32Exception(Marshal.GetLastWin32Error(), "Could not query LucyServer state.");
+                    throw new System.ComponentModel.Win32Exception(Marshal.GetLastWin32Error(), "Could not query LucyVNC Server state.");
                 }
 
                 if (status.CurrentState != ServiceRunning)
@@ -118,7 +118,7 @@ public static class WindowsServiceStatusProbe
                     var error = Marshal.GetLastWin32Error();
                     if (error != ErrorServiceNotActive)
                     {
-                        throw new System.ComponentModel.Win32Exception(error, "Could not stop LucyServer to apply its saved configuration.");
+                        throw new System.ComponentModel.Win32Exception(error, "Could not stop LucyVNC Server to apply its saved configuration.");
                     }
                 }
 
@@ -128,7 +128,7 @@ public static class WindowsServiceStatusProbe
                     var error = Marshal.GetLastWin32Error();
                     if (error != ErrorServiceAlreadyRunning)
                     {
-                        throw new System.ComponentModel.Win32Exception(error, "Could not restart LucyServer with the saved configuration.");
+                        throw new System.ComponentModel.Win32Exception(error, "Could not restart LucyVNC Server with the saved configuration.");
                     }
                 }
 
@@ -153,7 +153,7 @@ public static class WindowsServiceStatusProbe
         {
             if (!QueryServiceStatusEx(service, 0, out var status, (uint)Marshal.SizeOf<ServiceStatusProcess>(), out _))
             {
-                throw new System.ComponentModel.Win32Exception(Marshal.GetLastWin32Error(), "Could not query LucyServer while waiting for a state change.");
+                throw new System.ComponentModel.Win32Exception(Marshal.GetLastWin32Error(), "Could not query LucyVNC Server while waiting for a state change.");
             }
 
             if (status.CurrentState == expectedState)
@@ -163,13 +163,13 @@ public static class WindowsServiceStatusProbe
 
             if (expectedState == ServiceRunning && status.CurrentState == ServiceStopped)
             {
-                throw new InvalidOperationException($"LucyServer stopped during restart (Windows exit code {status.Win32ExitCode}, service exit code {status.ServiceSpecificExitCode}).");
+                throw new InvalidOperationException($"LucyVNC Server stopped during restart (Windows exit code {status.Win32ExitCode}, service exit code {status.ServiceSpecificExitCode}).");
             }
 
             Thread.Sleep(TimeSpan.FromMilliseconds(100));
         }
 
-        throw new TimeoutException($"LucyServer did not reach SCM state {expectedState} within {timeout}.");
+        throw new TimeoutException($"LucyVNC Server did not reach SCM state {expectedState} within {timeout}.");
     }
 
     private const uint ScManagerConnect = 0x0001;

@@ -51,13 +51,6 @@
                             <TextBlock Text="Favoritos" VerticalAlignment="Center" />
                         </StackPanel>
                     </Button>
-                    <Button x:Name="AccessNavigation" Style="{StaticResource NavigationButton}" Tag="access"
-                            Click="Navigate_Click" ToolTip="Acessos" AutomationProperties.Name="Acessos">
-                        <StackPanel Orientation="Horizontal">
-                            <Path Data="{StaticResource IconAccess}" Width="19" Height="19" Fill="{StaticResource TextSecondary}" Stretch="Uniform" Margin="0,0,12,0" />
-                            <TextBlock Text="Acessos" VerticalAlignment="Center" />
-                        </StackPanel>
-                    </Button>
                     <Button x:Name="SettingsNavigation" Style="{StaticResource NavigationButton}" Tag="settings"
                             Click="Navigate_Click" ToolTip="Configurações" AutomationProperties.Name="Configurações">
                         <StackPanel Orientation="Horizontal">
@@ -331,73 +324,6 @@
                             </StackPanel>
                         </Border>
                     </Grid>
-                </Grid>
-
-                <Grid x:Name="AccessPage" Visibility="Collapsed">
-                    <Grid.ColumnDefinitions>
-                        <ColumnDefinition Width="*" />
-                        <ColumnDefinition Width="1.25*" />
-                    </Grid.ColumnDefinitions>
-                    <Border Style="{StaticResource LucyCard}" Padding="18" Margin="0,0,12,0">
-                        <ScrollViewer VerticalScrollBarVisibility="Auto">
-                            <StackPanel>
-                                <TextBlock Text="Acesso temporário (encerra com o Manager)" Style="{StaticResource SectionTitle}" Margin="0,0,0,5" />
-                                <TextBlock Text="Este servidor existe somente enquanto o Manager estiver aberto. Para compartilhar independentemente, configure LucyServer ao lado."
-                                           Foreground="{StaticResource TextSecondary}" TextWrapping="Wrap" Margin="0,0,0,12" />
-                                <TextBlock Text="Endereço de bind" Foreground="{StaticResource TextSecondary}" FontSize="11" />
-                                <TextBox x:Name="BindAddressBox" Text="127.0.0.1" />
-                                <TextBlock Text="Porta TCP" Foreground="{StaticResource TextSecondary}" FontSize="11" />
-                                <TextBox x:Name="ServerPortBox" Text="5900" />
-                                <TextBlock Text="Senha VNC (8 caracteres ASCII)" Foreground="{StaticResource TextSecondary}" FontSize="11" />
-                                <PasswordBox x:Name="ServerPasswordBox" MaxLength="8" />
-                                <CheckBox x:Name="ServerViewOnlyCheckBox" Content="Somente visualização" Margin="0,4,0,12" />
-                                <WrapPanel>
-                                    <Button x:Name="StartServerButton" Content="Habilitar acesso" Style="{StaticResource PrimaryButton}" Click="StartServer_Click" />
-                                    <Button x:Name="StopServerButton" Content="Desabilitar" Style="{StaticResource CompactButton}" Click="StopServer_Click" IsEnabled="False" />
-                                </WrapPanel>
-                                <TextBlock x:Name="ServerStatus" Text="Desativado" Margin="0,10,0,0" />
-                            </StackPanel>
-                        </ScrollViewer>
-                    </Border>
-                    <Border Grid.Column="1" Style="{StaticResource LucyCard}" Padding="20">
-                        <ScrollViewer VerticalScrollBarVisibility="Auto">
-                            <StackPanel>
-                                <TextBlock Text="LucyServer persistente (serviço Windows)" FontSize="18" FontWeight="SemiBold" Foreground="{StaticResource Accent}" />
-                                <TextBlock Text="Executa independentemente do Manager. Fechar esta janela não interrompe o serviço nem o Agent."
-                                           Foreground="{StaticResource TextSecondary}" Margin="0,5,0,0" TextWrapping="Wrap" />
-                                <TextBlock x:Name="ServiceStatus" Text="Consultando o Service Control Manager..."
-                                           Margin="0,10,0,12" TextWrapping="Wrap" />
-                                <CheckBox x:Name="ServiceSharingCheckBox" Content="Habilitar compartilhamento do LucyServer"
-                                          Margin="0,0,0,8" />
-                                <CheckBox x:Name="ServiceAutoStartCheckBox" Content="Iniciar serviço automaticamente com o Windows"
-                                          Margin="0,0,0,8" />
-                                <TextBlock Text="Endereço de bind (loopback ou IP privado/VPN)" Foreground="{StaticResource TextSecondary}" FontSize="11" />
-                                <TextBox x:Name="ServiceBindAddressBox" Text="127.0.0.1" />
-                                <TextBlock Text="Porta TCP" Foreground="{StaticResource TextSecondary}" FontSize="11" />
-                                <TextBox x:Name="ServicePortBox" Text="5901" />
-                                <TextBlock Text="Senha VNC (8 caracteres ASCII)" Foreground="{StaticResource TextSecondary}" FontSize="11" />
-                                <PasswordBox x:Name="ServicePasswordBox" MaxLength="8" />
-                                <CheckBox x:Name="AgentAutoStartCheckBox"
-                                          Content="Iniciar a bandeja LucyServer e o Agent automaticamente no logon deste usuário"
-                                          Margin="0,7,0,12" />
-                                <Button Content="Salvar configuração protegida" Style="{StaticResource PrimaryButton}"
-                                        Click="SaveServiceConfiguration_Click" />
-                                <TextBlock Text="A senha é protegida por DPAPI e ACL de SYSTEM/Administradores. O tráfego VNC clássico não é criptografado."
-                                           Foreground="{StaticResource TextSecondary}" FontSize="10" Margin="0,7,0,12" TextWrapping="Wrap" />
-                                <WrapPanel>
-                                    <Button Content="Instalar serviço..." Style="{StaticResource CompactButton}" Click="InstallService_Click" />
-                                    <Button Content="Iniciar" Style="{StaticResource CompactButton}" Click="StartService_Click" />
-                                    <Button Content="Parar" Style="{StaticResource CompactButton}" Click="StopService_Click" />
-                                    <Button Content="Reiniciar" Style="{StaticResource CompactButton}" Click="RestartService_Click" />
-                                    <Button Content="Desinstalar..." Style="{StaticResource CompactButton}" Click="UninstallService_Click" />
-                                </WrapPanel>
-                                <TextBlock Text="O Agent roda como o usuário interativo; o Worker usa a identidade do serviço. Troca de usuário, bloqueio, desktop seguro, UAC e pré-logon não são suportados. A configuração e o ciclo de vida do serviço exigem elevação via UAC."
-                                           Foreground="{StaticResource Warning}" Margin="0,14,0,0" TextWrapping="Wrap" />
-                                <TextBlock Text="A opção registra a bandeja separada do Manager no logon. Fechar a bandeja não para o serviço nem o Agent; desmarcá-la remove apenas a inicialização futura."
-                                           Foreground="{StaticResource TextSecondary}" Margin="0,12,0,0" TextWrapping="Wrap" />
-                            </StackPanel>
-                        </ScrollViewer>
-                    </Border>
                 </Grid>
 
                 <Grid x:Name="SettingsPage" Visibility="Collapsed">

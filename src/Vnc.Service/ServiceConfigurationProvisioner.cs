@@ -372,7 +372,7 @@ public sealed class ServiceCredentialStore
         var path = GetCredentialPath();
         if (!File.Exists(path))
         {
-            throw new FileNotFoundException("No protected LucyServer credential is configured.", path);
+            throw new FileNotFoundException("No protected LucyVNC Server credential is configured.", path);
         }
 
         if ((File.GetAttributes(path) & FileAttributes.ReparsePoint) != 0)

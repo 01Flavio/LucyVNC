@@ -22,6 +22,8 @@
   <ItemGroup>
     <ProjectReference Include="..\..\src\Vnc.App\Vnc.App.csproj" />
     <ProjectReference Include="..\..\src\Vnc.Infrastructure\Vnc.Infrastructure.csproj" />
+    <ProjectReference Include="..\..\src\Vnc.Server\Vnc.Server.csproj" />
+    <ProjectReference Include="..\..\src\Vnc.Platform.Windows\Vnc.Platform.Windows.csproj" />
   </ItemGroup>
 
   <ItemGroup>

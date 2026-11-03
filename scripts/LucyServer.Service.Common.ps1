@@ -2,14 +2,14 @@ Set-StrictMode -Version Latest
 $ErrorActionPreference = 'Stop'
 
 $script:LucyServerServiceName = 'LucyVNCService'
-$script:LucyServerDisplayName = 'LucyServer'
+$script:LucyServerDisplayName = 'LucyVNC Server'
 $script:LucyServerDefaultExecutablePath = Join-Path `
     (Split-Path -Parent $PSScriptRoot) `
-    'src\Vnc.Service\bin\Release\net8.0-windows\win-x64\publish\Vnc.Service.exe'
+    'artifacts\publish\server-worker\LucyVNC.Server.Worker.exe'
 
 function Assert-LvcWindowsAdministrator {
     if ([Environment]::OSVersion.Platform -ne [PlatformID]::Win32NT) {
-        throw 'LucyServer service management is supported only on Windows.'
+        throw 'LucyVNC Server service management is supported only on Windows.'
     }
 
     $identity = [Security.Principal.WindowsIdentity]::GetCurrent()

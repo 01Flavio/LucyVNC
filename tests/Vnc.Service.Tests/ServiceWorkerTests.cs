@@ -19,7 +19,7 @@ public class ServiceWorkerTests
     {
         var root = FindRepositoryRoot();
         var processHostPath = Path.Combine(root, "tests", "Vnc.ProcessHost", "bin", "Release", "net8.0-windows", "Vnc.ProcessHost.exe");
-        var workerPath = Path.Combine(root, "src", "Vnc.Service", "bin", "Release", "net8.0-windows", "Vnc.Service.exe");
+        var workerPath = Path.Combine(root, "src", "Vnc.Service", "bin", "Release", "net8.0-windows", "LucyVNC.Server.Worker.exe");
         Assert.True(File.Exists(processHostPath), $"Process host was not built: {processHostPath}");
         Assert.True(File.Exists(workerPath), $"Worker was not built: {workerPath}");
 
@@ -354,7 +354,7 @@ public class ServiceWorkerTests
             var executableName = Path.GetFileNameWithoutExtension(executablePath);
             var label = executableName switch
             {
-                "Vnc.Service" => "WORKER",
+                "LucyVNC.Server.Worker" => "WORKER",
                 "Vnc.ProcessHost" when startInfo.ArgumentList.FirstOrDefault() == "agent" => "AGENT",
                 "Vnc.ProcessHost" => "SERVER",
                 _ => executableName,

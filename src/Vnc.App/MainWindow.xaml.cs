@@ -2,7 +2,6 @@ using System.ComponentModel;
 using System.Diagnostics;
 using System.IO;
 using System.Net;
-using System.Net.Sockets;
 using System.Runtime.InteropServices;
 using System.Windows;
 using System.Windows.Controls;
@@ -13,14 +12,9 @@ using System.Windows.Shapes;
 using System.Windows.Threading;
 using System.Windows.Interop;
 using Microsoft.Data.Sqlite;
-using Microsoft.Win32;
-using System.Security.Principal;
 using Path = System.IO.Path;
 using Vnc.Core;
 using Vnc.Infrastructure;
-using Vnc.Platform.Windows;
-using Vnc.Server;
-using Vnc.Service;
 using Vnc.Viewer;
 
 namespace Vnc.App;
@@ -33,15 +27,13 @@ public partial class MainWindow : Window
     private readonly Dictionary<Guid, ViewerTabState> _sessions = new();
     private readonly HashSet<string> _connectingEndpoints = new(StringComparer.OrdinalIgnoreCase);
     private RemoteWorkspaceWindow? _workspace;
-    private VncServer? _server;
     private Guid? _editingComputerId;
     private string _currentPage = "computers";
     private bool _storeReady;
     private bool _refreshingGroups;
     private bool _allowClose;
     private bool _isShuttingDown;
-    private DispatcherTimer? _serviceStatusTimer;
-    private System.Drawing.Icon? _trayIcon;
+    private IntPtr _trayIcon;
     private HwndSource? _trayWindowSource;
     private ContextMenu? _trayContextMenu;
     private const int TrayCallbackMessage = 0x8001;
@@ -67,11 +59,6 @@ public partial class MainWindow : Window
             await _store.InitializeAsync();
             _storeReady = true;
             InitializeTrayIcon();
-            LoadServiceConfiguration();
-            RefreshServiceStatus();
-            _serviceStatusTimer = new DispatcherTimer { Interval = TimeSpan.FromSeconds(5) };
-            _serviceStatusTimer.Tick += (_, _) => RefreshServiceStatus();
-            _serviceStatusTimer.Start();
             DatabaseStatus.Text = "Banco SQLite inicializado; senhas consentidas ficam no Windows Credential Manager.";
             var savedSort = await _store.GetPreferenceAsync("computer-sort");
             var sortItem = SortBox.Items.OfType<ComboBoxItem>().FirstOrDefault(item => Equals(item.Tag, savedSort));
@@ -118,19 +105,12 @@ public partial class MainWindow : Window
         UpdateNavigationSelection(page);
         ComputerPage.Visibility = page is "computers" or "favorites" ? Visibility.Visible : Visibility.Collapsed;
         HistoryPage.Visibility = page == "recent" ? Visibility.Visible : Visibility.Collapsed;
-        AccessPage.Visibility = page == "access" ? Visibility.Visible : Visibility.Collapsed;
         SettingsPage.Visibility = page == "settings" ? Visibility.Visible : Visibility.Collapsed;
         SessionsPage.Visibility = page == "sessions" ? Visibility.Visible : Visibility.Collapsed;
-        if (page == "access")
-        {
-            RefreshServiceStatus();
-        }
-
         PageTitle.Text = page switch
         {
             "recent" => "Recentes",
             "favorites" => "Favoritos",
-            "access" => "Acessos",
             "settings" => "Configurações",
             "sessions" => "Sessões remotas",
             _ => "Computadores",
@@ -139,7 +119,6 @@ public partial class MainWindow : Window
         {
             "recent" => "Histórico de conexões autenticadas.",
             "favorites" => "Acesso rápido aos computadores favoritos.",
-            "access" => "Compartilhamento nesta sessão e estado do serviço.",
             "settings" => "Preferências e segurança locais.",
             "sessions" => "Cada conexão mantém seu próprio ciclo de vida.",
             _ => "Gerencie destinos e abra sessões independentes.",
@@ -153,7 +132,7 @@ public partial class MainWindow : Window
         var navigation = new[]
         {
             ComputersNavigation, RecentNavigation, FavoritesNavigation,
-            AccessNavigation, SettingsNavigation, SessionsNavigation,
+            SettingsNavigation, SessionsNavigation,
         };
         foreach (var button in navigation)
         {
@@ -1038,7 +1017,6 @@ public partial class MainWindow : Window
             UpdateNavigationSelection(_currentPage);
             ComputerPage.Visibility = Visibility.Visible;
             HistoryPage.Visibility = Visibility.Collapsed;
-            AccessPage.Visibility = Visibility.Collapsed;
             SettingsPage.Visibility = Visibility.Collapsed;
             SessionsPage.Visibility = Visibility.Collapsed;
             PageTitle.Text = "Computadores";
@@ -1394,359 +1372,22 @@ public partial class MainWindow : Window
         }
     }
 
-    private void StartServer_Click(object sender, RoutedEventArgs e)
-    {
-        if (_server?.IsRunning == true)
-        {
-            return;
-        }
-
-        if (!IPAddress.TryParse(BindAddressBox.Text.Trim(), out var bindAddress))
-        {
-            ServerStatus.Text = "Endereço de bind inválido. Informe um IP específico.";
-            return;
-        }
-
-        if (!VncServer.IsAllowedBindAddress(bindAddress))
-        {
-            ServerStatus.Text = "Use loopback, um endereço privado/VPN ou um endereço link-local. Endereços públicos não são permitidos.";
-            return;
-        }
-
-        if (!int.TryParse(ServerPortBox.Text, out var port) || port is < 1 or > 65535)
-        {
-            ServerStatus.Text = "Informe uma porta TCP entre 1 e 65535.";
-            return;
-        }
-
-        var password = ServerPasswordBox.Password;
-        if (password.Length != 8 || password.Any(character => character > 0x7f))
-        {
-            ServerStatus.Text = "A senha deve conter exatamente oito caracteres ASCII.";
-            return;
-        }
-
-        if (!IPAddress.IsLoopback(bindAddress) &&
-            MessageBox.Show(
-                this,
-                $"O acesso ficará disponível em {bindAddress}:{port}. VNC não cifra a sessão. Continue somente em uma rede confiável/VPN.",
-                "Confirmar compartilhamento",
-                MessageBoxButton.YesNo,
-                MessageBoxImage.Warning) != MessageBoxResult.Yes)
-        {
-            return;
-        }
-
-        var settings = new ConnectionSettings
-        {
-            BindAddress = bindAddress.ToString(),
-            Port = port,
-            Password = password,
-            ViewOnly = ServerViewOnlyCheckBox.IsChecked == true,
-            MaxSessions = 1,
-        };
-        VncServer? server = null;
-        try
-        {
-            server = new VncServer(settings);
-            server.StatusChanged += (_, message) => Dispatcher.BeginInvoke(() => ServerStatus.Text = message);
-            server.Start();
-            _server = server;
-            StartServerButton.IsEnabled = false;
-            StopServerButton.IsEnabled = true;
-            ServerViewOnlyCheckBox.IsEnabled = false;
-            ServerStatus.Text = $"Ativo em {settings.BindAddress}:{server.BoundPort}.";
-        }
-        catch (Exception exception)
-        {
-            ServerStatus.Text = $"Não foi possível iniciar: {exception.Message}";
-            server?.Dispose();
-            _server = null;
-        }
-        finally
-        {
-            ServerPasswordBox.Clear();
-        }
-    }
-
-    private void RefreshServiceStatus()
-    {
-        var serviceDiagnostic = WindowsServiceStatusProbe.GetDiagnostic();
-        try
-        {
-            var runtimeStatus = new ServiceRuntimeStatusStore(new ServiceConfigurationStore().RuntimeStatusPath).Read();
-            if (runtimeStatus is null)
-            {
-                ServiceStatus.Text = $"{serviceDiagnostic}{Environment.NewLine}Runtime: ainda não há diagnóstico publicado pelo Worker.";
-                return;
-            }
-
-            var fresh = DateTimeOffset.UtcNow - runtimeStatus.UpdatedUtc <= TimeSpan.FromSeconds(20);
-            ServiceStatus.Text = $"{serviceDiagnostic}{Environment.NewLine}Runtime {(fresh ? "atual" : "desatualizado")}: {runtimeStatus.State}. {runtimeStatus.Detail}";
-        }
-        catch (Exception exception) when (exception is IOException or UnauthorizedAccessException or System.Security.SecurityException or System.Text.Json.JsonException or InvalidDataException)
-        {
-            ServiceStatus.Text = $"{serviceDiagnostic}{Environment.NewLine}Runtime: não foi possível ler o diagnóstico ({exception.Message}).";
-        }
-    }
-
-    private void LoadServiceConfiguration()
-    {
-        try
-        {
-            var configuration = new ServiceConfigurationStore().LoadExisting();
-            ServiceSharingCheckBox.IsChecked = configuration.RemoteSharingEnabled;
-            ServiceAutoStartCheckBox.IsChecked = configuration.StartAutomatically;
-            ServiceBindAddressBox.Text = configuration.BindAddress;
-            ServicePortBox.Text = configuration.Port.ToString();
-            AgentAutoStartCheckBox.IsChecked = AgentStartupRegistration.IsEnabled();
-        }
-        catch (Exception exception) when (exception is IOException or UnauthorizedAccessException or System.Security.SecurityException or System.Text.Json.JsonException or InvalidDataException)
-        {
-            ServiceStatus.Text = $"Não foi possível ler a configuração segura: {exception.Message}";
-        }
-    }
-
-    private async void SaveServiceConfiguration_Click(object sender, RoutedEventArgs e)
-    {
-        if (!IPAddress.TryParse(ServiceBindAddressBox.Text.Trim(), out var bindAddress) ||
-            !ServiceConfiguration.IsAllowedBindAddress(bindAddress))
-        {
-            ServiceStatus.Text = "Use um IP explícito de loopback, LAN privada, VPN ou link-local. Endereços públicos não são permitidos.";
-            return;
-        }
-
-        if (!int.TryParse(ServicePortBox.Text, out var port) || port is < 1 or > 65535)
-        {
-            ServiceStatus.Text = "Informe uma porta TCP entre 1 e 65535.";
-            return;
-        }
-
-        var password = ServicePasswordBox.Password;
-        if (password.Length != 8 || password.Any(character => character > 0x7f))
-        {
-            ServiceStatus.Text = "A senha deve conter exatamente oito caracteres ASCII.";
-            return;
-        }
-
-        if (!IPAddress.IsLoopback(bindAddress) &&
-            MessageBox.Show(
-                this,
-                $"O LucyServer ficará disponível em {bindAddress}:{port}. VNC clássico não cifra o tráfego. Continue somente em uma rede confiável/VPN.",
-                "Confirmar configuração do LucyServer",
-                MessageBoxButton.YesNo,
-                MessageBoxImage.Warning) != MessageBoxResult.Yes)
-        {
-            return;
-        }
-
-        var trayPath = GetTrayExecutablePath();
-        var configuration = new ServiceConfiguration
-        {
-            RemoteSharingEnabled = ServiceSharingCheckBox.IsChecked == true,
-            BindAddress = bindAddress.ToString(),
-            Port = port,
-            StartAutomatically = ServiceAutoStartCheckBox.IsChecked == true,
-            AuthenticationRequired = true,
-            MaxSessions = 1,
-            AgentSid = WindowsIdentity.GetCurrent().User?.Value
-                ?? throw new InvalidOperationException("Could not resolve the current Windows user SID for the desktop Agent."),
-            AgentWorkerSid = new SecurityIdentifier(WellKnownSidType.LocalSystemSid, null).Value,
-        };
-
-        string? requestPath = null;
-        try
-        {
-            ServiceStatus.Text = "Solicitando elevação para proteger a configuração...";
-            requestPath = ServiceConfigurationProvisioner.WriteProtectedRequest(
-                new ServiceConfigurationRequest(configuration, password));
-            await RunElevatedConfigurationAsync(GetServiceExecutablePath(), requestPath);
-            var agentAutoStartEnabled = AgentAutoStartCheckBox.IsChecked == true;
-            AgentStartupRegistration.SetEnabled(agentAutoStartEnabled, trayPath);
-            if (agentAutoStartEnabled)
-            {
-                AgentStartupRegistration.StartNow(trayPath);
-            }
-
-            ServiceStatus.Text = configuration.RemoteSharingEnabled
-                ? agentAutoStartEnabled
-                    ? "Configuração protegida. Se o serviço já estava ativo, foi reiniciado; se estava parado, inicie-o para aplicar. A bandeja LucyServer e o supervisor do Agent foram iniciados e registrados para este usuário."
-                    : "Configuração protegida. Se o serviço já estava ativo, foi reiniciado; se estava parado, inicie-o para aplicar. O serviço só poderá compartilhar quando um Agent interativo estiver ativo."
-                : "Compartilhamento desabilitado na configuração protegida. Se o serviço estava ativo, foi reiniciado; se estava parado, não há listener.";
-            ServicePasswordBox.Clear();
-            RefreshServiceStatus();
-        }
-        catch (Exception exception) when (exception is IOException or UnauthorizedAccessException or System.Security.SecurityException or System.Security.Cryptography.CryptographicException or System.ComponentModel.Win32Exception or InvalidOperationException or System.Text.Json.JsonException)
-        {
-            ServiceStatus.Text = $"Falha ao salvar/aplicar a configuração: {exception.Message}";
-            MessageBox.Show(
-                this,
-                $"{exception.Message}\n\nSe a falha ocorreu durante a reinicialização, a configuração pode já ter sido salva. Confira o estado do serviço; ele pode ainda estar usando a configuração anterior.",
-                "LucyServer",
-                MessageBoxButton.OK,
-                MessageBoxImage.Error);
-        }
-        finally
-        {
-            if (requestPath is not null)
-            {
-                ServiceConfigurationProvisioner.DeleteProtectedRequest(requestPath);
-            }
-
-            ServicePasswordBox.Clear();
-        }
-    }
-
-    private async Task RunElevatedConfigurationAsync(string serviceExecutablePath, string requestPath)
-    {
-        var startInfo = new ProcessStartInfo(serviceExecutablePath)
-        {
-            UseShellExecute = true,
-            Verb = "runas",
-            WorkingDirectory = Path.GetDirectoryName(serviceExecutablePath)!,
-        };
-        startInfo.ArgumentList.Add("--configure");
-        startInfo.ArgumentList.Add(requestPath);
-        using var process = Process.Start(startInfo)
-            ?? throw new InvalidOperationException("Could not start the elevated LucyServer configuration helper.");
-        await process.WaitForExitAsync();
-        if (process.ExitCode != 0)
-        {
-            throw new InvalidOperationException($"The elevated configuration helper exited with code {process.ExitCode}.");
-        }
-    }
-
-    private async void InstallService_Click(object sender, RoutedEventArgs e) =>
-        await RunServiceScriptFromUiAsync(
-            "Install-LucyServerService.ps1",
-            "-ExecutablePath",
-            GetServiceExecutablePath(),
-            "-StartupType",
-            ServiceAutoStartCheckBox.IsChecked == true ? "Automatic" : "Manual");
-
-    private async void StartService_Click(object sender, RoutedEventArgs e) =>
-        await RunServiceScriptFromUiAsync("Start-LucyServerService.ps1");
-
-    private async void StopService_Click(object sender, RoutedEventArgs e) =>
-        await RunServiceScriptFromUiAsync("Stop-LucyServerService.ps1");
-
-    private async void RestartService_Click(object sender, RoutedEventArgs e) =>
-        await RunServiceScriptFromUiAsync("Restart-LucyServerService.ps1");
-
-    private async void UninstallService_Click(object sender, RoutedEventArgs e)
-    {
-        if (MessageBox.Show(this, "Desinstalar o serviço LucyServer? A configuração e a senha protegida serão preservadas.", "Confirmar desinstalação",
-                MessageBoxButton.YesNo, MessageBoxImage.Warning) != MessageBoxResult.Yes)
-        {
-            return;
-        }
-
-        await RunServiceScriptFromUiAsync("Uninstall-LucyServerService.ps1");
-    }
-
-    private async Task RunServiceScriptFromUiAsync(string scriptName, params string[] arguments)
-    {
-        try
-        {
-            var scriptPath = GetServiceScriptPath(scriptName);
-            var startInfo = new ProcessStartInfo(GetPowerShellPath())
-            {
-                UseShellExecute = true,
-                Verb = "runas",
-                WorkingDirectory = Path.GetDirectoryName(scriptPath)!,
-            };
-            startInfo.ArgumentList.Add("-NoProfile");
-            startInfo.ArgumentList.Add("-ExecutionPolicy");
-            startInfo.ArgumentList.Add("Bypass");
-            startInfo.ArgumentList.Add("-File");
-            startInfo.ArgumentList.Add(scriptPath);
-            foreach (var argument in arguments)
-            {
-                startInfo.ArgumentList.Add(argument);
-            }
-
-            using var process = Process.Start(startInfo)
-                ?? throw new InvalidOperationException("Could not start the elevated LucyServer service operation.");
-            await process.WaitForExitAsync();
-            if (process.ExitCode != 0)
-            {
-                throw new InvalidOperationException($"The service management script exited with code {process.ExitCode}.");
-            }
-
-            RefreshServiceStatus();
-        }
-        catch (Exception exception) when (exception is IOException or UnauthorizedAccessException or System.Security.SecurityException or System.ComponentModel.Win32Exception or InvalidOperationException)
-        {
-            ServiceStatus.Text = $"Operação do serviço não concluída: {exception.Message}";
-        }
-    }
-
-    private static string GetPowerShellPath() =>
-        Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.System), "WindowsPowerShell", "v1.0", "powershell.exe");
-
-    private static string GetServiceExecutablePath() =>
-        ResolveLucyVncPath("Service", Path.Combine("Vnc.Service", "bin", "Release", "net8.0-windows", "Vnc.Service.exe"));
-
-    private static string GetTrayExecutablePath() =>
-        ResolveLucyVncPath("Tray", Path.Combine("Vnc.Tray", "bin", "Release", "net8.0-windows", "LucyTray.exe"));
-
-    private static string GetServiceScriptPath(string scriptName)
-    {
-        var installedPath = Path.Combine(AppContext.BaseDirectory, "Scripts", scriptName);
-        if (File.Exists(installedPath))
-        {
-            return installedPath;
-        }
-
-        var repositoryRoot = FindRepositoryRoot()
-            ?? throw new FileNotFoundException("LucyVNC service management scripts were not found.", installedPath);
-        var repositoryPath = Path.Combine(repositoryRoot, "scripts", scriptName);
-        return File.Exists(repositoryPath)
-            ? repositoryPath
-            : throw new FileNotFoundException("LucyVNC service management script was not found.", repositoryPath);
-    }
-
-    private static string ResolveLucyVncPath(string installedSubdirectory, string repositoryRelativePath)
-    {
-        var installedPath = Path.Combine(AppContext.BaseDirectory, installedSubdirectory, Path.GetFileName(repositoryRelativePath));
-        if (File.Exists(installedPath))
-        {
-            return installedPath;
-        }
-
-        var repositoryRoot = FindRepositoryRoot()
-            ?? throw new FileNotFoundException($"LucyVNC {installedSubdirectory} executable was not found.", installedPath);
-        var repositoryPath = Path.Combine(repositoryRoot, "src", repositoryRelativePath);
-        return File.Exists(repositoryPath)
-            ? repositoryPath
-            : throw new FileNotFoundException($"LucyVNC {installedSubdirectory} executable was not found.", repositoryPath);
-    }
-
-    private static string? FindRepositoryRoot()
-    {
-        for (var directory = new DirectoryInfo(AppContext.BaseDirectory); directory is not null; directory = directory.Parent)
-        {
-            if (File.Exists(Path.Combine(directory.FullName, "LucyVNC.slnx")))
-            {
-                return directory.FullName;
-            }
-        }
-
-        return null;
-    }
-
     private void InitializeTrayIcon()
     {
-        if (_trayIcon is not null)
+        if (_trayIcon != IntPtr.Zero)
         {
             return;
         }
 
         var executable = Environment.ProcessPath
-            ?? throw new InvalidOperationException("Could not resolve the LucyViewer executable path for the notification area.");
-        var icon = System.Drawing.Icon.ExtractAssociatedIcon(executable)
-            ?? throw new InvalidOperationException("Could not load the LucyVNC application icon.");
-        _trayIcon = icon;
+            ?? throw new InvalidOperationException("Could not resolve the LucyVNC Manager executable path for the notification area.");
+        var icons = new IntPtr[1];
+        if (ExtractIconEx(executable, 0, null, icons, 1) == 0 || icons[0] == IntPtr.Zero)
+        {
+            throw new InvalidOperationException("Could not load the LucyVNC Manager application icon.");
+        }
+
+        _trayIcon = icons[0];
         var windowHandle = new WindowInteropHelper(this).Handle;
         _trayWindowSource = HwndSource.FromHwnd(windowHandle)
             ?? throw new InvalidOperationException("Could not register the LucyVNC notification-area message handler.");
@@ -1767,7 +1408,7 @@ public partial class MainWindow : Window
             Id = 1,
             Flags = 0x1 | 0x2 | 0x4,
             CallbackMessage = TrayCallbackMessage,
-            IconHandle = icon.Handle,
+            IconHandle = _trayIcon,
             Tooltip = "LucyVNC",
         };
         if (!Shell_NotifyIcon(0, ref data))
@@ -1775,8 +1416,8 @@ public partial class MainWindow : Window
             _trayContextMenu = null;
             _trayWindowSource.RemoveHook(TrayWindowProc);
             _trayWindowSource = null;
-            _trayIcon.Dispose();
-            _trayIcon = null;
+            DestroyIcon(_trayIcon);
+            _trayIcon = IntPtr.Zero;
             throw new System.ComponentModel.Win32Exception(Marshal.GetLastWin32Error(), "Could not add the LucyVNC icon to the notification area.");
         }
     }
@@ -1824,7 +1465,7 @@ public partial class MainWindow : Window
 
     private void MainWindow_StateChanged(object? sender, EventArgs e)
     {
-        if (WindowState == WindowState.Minimized && _trayIcon is not null)
+        if (WindowState == WindowState.Minimized && _trayIcon != IntPtr.Zero)
         {
             Hide();
         }
@@ -1832,8 +1473,7 @@ public partial class MainWindow : Window
 
     private void MainWindow_Closed(object? sender, EventArgs e)
     {
-        _serviceStatusTimer?.Stop();
-        if (_trayIcon is not null)
+        if (_trayIcon != IntPtr.Zero)
         {
             var data = new NotifyIconData
             {
@@ -1847,8 +1487,8 @@ public partial class MainWindow : Window
             _ = Shell_NotifyIcon(2, ref data);
             _trayWindowSource?.RemoveHook(TrayWindowProc);
             _trayContextMenu = null;
-            _trayIcon.Dispose();
-            _trayIcon = null;
+            DestroyIcon(_trayIcon);
+            _trayIcon = IntPtr.Zero;
             _trayWindowSource = null;
         }
     }
@@ -1880,40 +1520,12 @@ public partial class MainWindow : Window
     [return: System.Runtime.InteropServices.MarshalAs(System.Runtime.InteropServices.UnmanagedType.Bool)]
     private static extern bool Shell_NotifyIcon(uint message, ref NotifyIconData data);
 
-    private async void StopServer_Click(object sender, RoutedEventArgs e)
-    {
-        try
-        {
-            await StopServerAsync();
-        }
-        catch (Exception exception) when (exception is IOException or InvalidOperationException)
-        {
-            MessageBox.Show(this, exception.Message, "Não foi possível parar o servidor", MessageBoxButton.OK, MessageBoxImage.Error);
-        }
-    }
+    [System.Runtime.InteropServices.DllImport("shell32.dll", CharSet = System.Runtime.InteropServices.CharSet.Unicode, SetLastError = true)]
+    private static extern uint ExtractIconEx(string file, int iconIndex, IntPtr[]? largeIcons, IntPtr[] smallIcons, uint iconCount);
 
-    private async Task StopServerAsync()
-    {
-        var server = _server;
-        if (server is null)
-        {
-            return;
-        }
-
-        _server = null;
-        try
-        {
-            await server.StopAsync();
-        }
-        finally
-        {
-            server.Dispose();
-            StartServerButton.IsEnabled = true;
-            StopServerButton.IsEnabled = false;
-            ServerViewOnlyCheckBox.IsEnabled = true;
-            ServerStatus.Text = "Desativado";
-        }
-    }
+    [System.Runtime.InteropServices.DllImport("user32.dll", SetLastError = true)]
+    [return: System.Runtime.InteropServices.MarshalAs(System.Runtime.InteropServices.UnmanagedType.Bool)]
+    private static extern bool DestroyIcon(IntPtr icon);
 
     private void ShowNoSelection() =>
         MessageBox.Show(this, "Selecione um computador primeiro.", "Nenhum computador selecionado", MessageBoxButton.OK, MessageBoxImage.Information);
@@ -1961,11 +1573,6 @@ public partial class MainWindow : Window
         foreach (var session in _sessions.Values.ToArray())
         {
             await CloseSessionAsync(session, removeTab: true);
-        }
-
-        if (_server is not null)
-        {
-            await StopServerAsync();
         }
 
         if (_workspace is not null)

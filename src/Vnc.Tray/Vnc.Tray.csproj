@@ -2,7 +2,7 @@
 
   <PropertyGroup>
     <OutputType>WinExe</OutputType>
-    <AssemblyName>LucyTray</AssemblyName>
+    <AssemblyName>LucyVNC.Server</AssemblyName>
     <TargetFramework>net8.0-windows</TargetFramework>
     <ApplicationIcon>..\Vnc.App\Assets\LucyVNC.ico</ApplicationIcon>
     <ImplicitUsings>enable</ImplicitUsings>

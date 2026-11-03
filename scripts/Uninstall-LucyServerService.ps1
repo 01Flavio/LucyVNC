@@ -1,5 +1,7 @@
 [CmdletBinding(SupportsShouldProcess = $true)]
-param()
+param(
+    [switch]$Force
+)
 
 . (Join-Path $PSScriptRoot 'LucyServer.Service.Common.ps1')
 
@@ -10,7 +12,7 @@ $service = Assert-LvcServiceInstalled
 if (-not $PSCmdlet.ShouldProcess($script:LucyServerDisplayName, 'Stop if running and remove Windows service')) {
     return
 }
-if (-not $PSCmdlet.ShouldContinue(
+if (-not $Force -and -not $PSCmdlet.ShouldContinue(
     "Stop the $script:LucyServerDisplayName service if running and permanently uninstall it?",
     'Confirm service uninstall')) {
     Write-Host 'Uninstall cancelled.'

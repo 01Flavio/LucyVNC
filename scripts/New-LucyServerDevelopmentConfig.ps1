@@ -8,7 +8,7 @@ Set-StrictMode -Version Latest
 $ErrorActionPreference = 'Stop'
 
 if ([Environment]::OSVersion.Platform -ne [PlatformID]::Win32NT) {
-    throw 'LucyServer development configuration is supported only on Windows.'
+    throw 'LucyVNC Server development configuration is supported only on Windows.'
 }
 
 $directoryPath = Join-Path $env:LOCALAPPDATA 'LucyVNC\Development'
@@ -33,7 +33,7 @@ if ($sharingEnabled) {
     Write-Warning 'This enables an unencrypted classic VNC listener on 127.0.0.1:5901. Start the interactive agent only when ready for a controlled local test.'
 }
 
-if (-not $PSCmdlet.ShouldProcess($configurationPath, 'Write a current-user-only LucyServer development configuration')) {
+if (-not $PSCmdlet.ShouldProcess($configurationPath, 'Write a current-user-only LucyVNC Server development configuration')) {
     return
 }
 

@@ -1,19 +1,19 @@
 # LucyVNC
 
-LucyVNC is a Windows VNC Viewer and foreground Server built around a shared RFB implementation. The WPF application now includes a local computer manager, SQLite-backed history and preferences, and independent Viewer sessions.
+LucyVNC consists of two independently installable products: **LucyVNC Manager / Viewer** for outgoing remote sessions and **LucyVNC Server** for authenticated incoming desktop sharing. The Manager has no runtime dependency on Server components.
 
 ## Solution
 
-- `src/Vnc.App` — WPF LucyVNC Manager and independent Remote Workspace window; published app name is `LucyViewer.exe`
+- `src/Vnc.App` — WPF LucyVNC Manager / Viewer; published app name is `LucyVNC.Manager.exe`
 - `src/Vnc.Core` — shared framebuffer, pixel-format, and connection models
 - `src/Vnc.Protocol` — RFB negotiation, VNC Authentication, message framing, Raw and CopyRect encodings
 - `src/Vnc.Platform.Windows` — interactive desktop capture and Windows `SendInput`
 - `src/Vnc.Server` — authenticated RFB server library
 - `src/Vnc.Viewer` — RFB Viewer client
 - `src/Vnc.Infrastructure` — versioned SQLite schema, computer records, preferences, and history
-- `src/Vnc.Service` — Windows Service host, protected configuration, and status/control support for LucyServer
+- `src/Vnc.Service` — independent Windows Service Worker and protected configuration
 - `src/Vnc.Agent` — interactive-session desktop capture and input agent
-- `src/Vnc.Tray` — independent LucyServer notification-area app and per-user Agent supervisor launcher
+- `src/Vnc.Tray` — LucyVNC Server notification-area app and LucyVNC Server Configuration
 - `tests/*` — protocol, server, Viewer, integration, and SQLite tests
 
 ## Build, test, and publish
@@ -24,13 +24,17 @@ Run these commands from the repository root in PowerShell:
 dotnet restore "LucyVNC.slnx"
 dotnet build "LucyVNC.slnx" -c Release
 dotnet test "LucyVNC.slnx" -c Release
-dotnet publish "src/Vnc.App/Vnc.App.csproj" -c Release -r win-x64 --self-contained true
+dotnet publish "src/Vnc.App/Vnc.App.csproj" -c Release -r win-x64 --self-contained true -o "artifacts/publish/manager"
+dotnet publish "src/Vnc.Service/Vnc.Service.csproj" -c Release -r win-x64 --self-contained true -o "artifacts/publish/server-worker"
+dotnet publish "src/Vnc.Agent/Vnc.Agent.csproj" -c Release -r win-x64 --self-contained true -o "artifacts/publish/agent"
+dotnet publish "src/Vnc.Tray/Vnc.Tray.csproj" -c Release -r win-x64 --self-contained true -o "artifacts/publish/server-ui"
+& "C:\Users\Zero\AppData\Local\Programs\Inno Setup 6\ISCC.exe" "installer\LucyVNC.iss"
 ```
 
-The self-contained Viewer is published to:
+The self-contained Manager / Viewer is published to:
 
 ```text
-src\Vnc.App\bin\Release\net8.0-windows\win-x64\publish\LucyViewer.exe
+artifacts\publish\manager\LucyVNC.Manager.exe
 ```
 
 ## Use
@@ -41,8 +45,7 @@ src\Vnc.App\bin\Release\net8.0-windows\win-x64\publish\LucyViewer.exe
 4. Each connection opens an independent tab in the separate **Remote Workspace** window. The window has its own taskbar/Alt+Tab entry; switching tabs leaves each session's RFB receive loop running. The Manager lists open sessions and their status.
 5. Each tab has independent connect/disconnect and view-only state, framebuffer, pointer/key state, scaling and full-screen controls. **Ctrl+Alt+Del** is explicitly shown as unavailable. A disconnected session remains listed and can be reconnected using the password field.
 6. Closing a tab disconnects only that session. The Remote Workspace closes automatically after its last tab is removed and is recreated when another session opens; closing the Workspace directly with tabs open asks for confirmation. The Manager remains open.
-7. **Acessos** exposes both the legacy foreground server and LucyServer configuration/service controls. The foreground server is off by default, requires a VNC password on each start, binds to loopback by default, limits connections to one, and does not create firewall rules.
-8. Use **Importar conexões** and **Exportar conexões** to transfer non-secret computer settings in JSON or CSV. Import is previewed before applying; endpoint conflicts default to ignore. Export supports all entries, the extended-selection set, or favorites.
+7. Use **Importar conexões** and **Exportar conexões** to transfer non-secret computer settings in JSON or CSV. Import is previewed before applying; endpoint conflicts default to ignore. Export supports all entries, the extended-selection set, or favorites.
 
 The local database is `%LOCALAPPDATA%\LucyVNC\lucy.db`. It stores computers, sort/display preferences, and connection history; it has no password column. Schema migrations are tracked with SQLite `user_version`.
 
@@ -73,11 +76,11 @@ The native JSON format is versioned and contains only portable, non-secret conne
 
 - The RFB server requires classic VNC Authentication and restricts binds to loopback or permitted private/VPN/link-local ranges. VNC Authentication does **not** encrypt traffic and only provides an effective eight-character ASCII password.
 - `Vnc.Service` connects to `Vnc.Agent` over a local named pipe. The Agent ACL permits its session user and configured Worker identity, then verifies the actual impersonated pipe-client SID; the Worker also checks the pipe-server process SID and negotiates IPC version before accepting capture/input requests. The Worker opens no RFB listener until the Agent is authenticated and responsive, and closes the listener on Agent loss before retrying. IPC authenticates Windows user identities, not signed executable identities; processes running as the same Windows user remain within the trust boundary.
-- The Manager can save LucyServer configuration through UAC. Sharing defaults to disabled, bind defaults to loopback, authentication is mandatory, port defaults to 5901, and the session limit is one. Production settings are stored under `%ProgramData%\LucyVNC\Service`; the password is stored separately using DPAPI LocalMachine and an ACL for SYSTEM/Administrators. The Manager does not read the password back. Bind addresses are limited to loopback or explicit private/VPN/link-local IPs; public addresses are rejected. Saving settings restarts the service if SCM reports it running.
-- Installing, starting, stopping, restarting, and removing the Windows service are available in the Manager and require explicit UAC authorization. The service can be configured as Automatic or Manual and is left stopped after installation; installation does not create firewall rules. The separate LucyServer tray app can start with the user's logon and launches a single Agent supervisor for the configured user. The supervisor uses bounded backoff and restarts the Agent after failures; closing the Manager or exiting the tray does not stop the Worker, Agent, or active VNC sessions.
-- The Worker publishes a non-secret runtime status file. The Manager and LucyServer tray distinguish SCM `Running` from the Agent-authenticated, RFB-listener-ready state. The Worker does not open the RFB listener until an authorized Agent is connected and reports the interactive `Default` desktop available; it closes the listener after the desktop becomes unavailable (for example, on lock), then retries Agent connection.
+- LucyVNC Server Configuration, available from the Server tray, owns server settings and SCM actions. Configuration defaults to sharing disabled, loopback, port 5901, mandatory authentication, and one session. Protected settings live under `%ProgramData%\LucyVNC\Service`; the password uses DPAPI LocalMachine with an ACL for SYSTEM/Administrators. The Server binds only to loopback or explicit private/VPN/link-local IPs. Server actions require UAC; no firewall rules are created.
+- LucyVNC Setup offers Manager / Viewer, Server, or both. The Server component has its own setup page for bind, port, password, authorized Windows user, service startup, and Agent logon startup. Service installation is gated by explicit consent. The password is passed to the provisioner only in process environment, never command-line arguments; it is protected before being persisted. Viewer-only selection does not install Worker, Agent, Server tray, or Windows service.
+- The standalone Server app provides its own tray, configuration window, SCM controls, and Agent supervisor. It has no dependency on Manager; closing its tray does not stop the service or Agent. The Worker publishes a non-secret runtime status and opens the listener only after authenticating the Agent and confirming the interactive `Default` desktop is available.
 - The process integration test exercises Worker and Agent as separate processes with a synthetic framebuffer/input sink, verifies there is no listener before Agent startup, proves framebuffer and pointer/key event delivery, then stops/restarts the Agent and reconnects. It does **not** prove real desktop capture or actual Windows `SendInput`.
-- LucyServer's production SCM-to-interactive-Agent pipe authorization and lifecycle have not been validated with an installed service. The Manager's and tray's SCM/runtime status are diagnostic only and do not prove real desktop capture or input. The optional Inno Setup installer packages the Viewer, Worker, Agent, independent tray app, and service scripts; compiling it does not install or start the service.
+- Production SCM-to-interactive-Agent authorization, actual desktop capture/input, logon/reboot startup, and lock/unlock recovery require manual validation with an installed Server. SCM/runtime status does not by itself prove remote desktop capture or input.
 - Session 0 capture/input, secure desktop, UAC bypass, unattended control, automatic firewall changes, TLS/VeNCrypt, Tight encoding, clipboard, and multi-monitor capture are not supported.
 - Real Windows desktop input validation remains a separate opt-in check: `dotnet run --project "tests/Vnc.InteractiveProbe/Vnc.InteractiveProbe.csproj" -c Release`.
 - Moving/detaching a single session tab into another independent workspace window is not implemented. Sessions can be moved between monitors by moving the whole Remote Workspace window.

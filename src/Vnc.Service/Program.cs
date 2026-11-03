@@ -16,8 +16,8 @@ internal static class Program
         {
             var serviceRestarted = ServiceConfigurationProvisioner.ApplyProtectedRequest(args[1]);
             Console.WriteLine(serviceRestarted
-                ? "LucyServer configuration was saved securely and the running service was restarted."
-                : "LucyServer configuration was saved securely. Start the service to apply it.");
+                ? "LucyVNC Server configuration was saved securely and the running service was restarted."
+                : "LucyVNC Server configuration was saved securely. Start the service to apply it.");
             return Task.CompletedTask;
         }
 
@@ -246,7 +246,7 @@ internal sealed class ServiceWorker : BackgroundService
             }
         }
 
-        WriteRuntimeStatus("Stopped", false, false, configuration.BindAddress, configuration.Port, "LucyServer Worker stopped.");
+        WriteRuntimeStatus("Stopped", false, false, configuration.BindAddress, configuration.Port, "LucyVNC Server Worker stopped.");
     }
 
     public override async Task StopAsync(CancellationToken cancellationToken)
@@ -259,7 +259,7 @@ internal sealed class ServiceWorker : BackgroundService
             false,
             configuration?.BindAddress,
             configuration?.Port,
-            "LucyServer Worker stopped.");
+            "LucyVNC Server Worker stopped.");
     }
 
     private void WriteRuntimeStatus(
@@ -285,7 +285,7 @@ internal sealed class ServiceWorker : BackgroundService
         }
         catch (Exception exception) when (exception is IOException or UnauthorizedAccessException or System.Security.SecurityException or System.Text.Json.JsonException)
         {
-            _logger.LogWarning("Could not publish LucyServer runtime status: {Reason}", exception.Message);
+            _logger.LogWarning("Could not publish LucyVNC Server runtime status: {Reason}", exception.Message);
         }
     }
 

@@ -40,7 +40,7 @@ public sealed class ServiceRuntimeStatusStore
         Directory.CreateDirectory(_directoryPath);
         if ((File.GetAttributes(_directoryPath) & FileAttributes.ReparsePoint) != 0)
         {
-            throw new UnauthorizedAccessException("The LucyServer runtime status directory cannot be a reparse point.");
+            throw new UnauthorizedAccessException("The LucyVNC Server runtime status directory cannot be a reparse point.");
         }
 
         var temporaryPath = Path.Combine(_directoryPath, $"runtime.{Guid.NewGuid():N}.tmp");
@@ -74,11 +74,11 @@ public sealed class ServiceRuntimeStatusStore
 
         if ((File.GetAttributes(StatusPath) & FileAttributes.ReparsePoint) != 0)
         {
-            throw new UnauthorizedAccessException("The LucyServer runtime status file cannot be a reparse point.");
+            throw new UnauthorizedAccessException("The LucyVNC Server runtime status file cannot be a reparse point.");
         }
 
         return JsonSerializer.Deserialize<ServiceRuntimeStatus>(File.ReadAllText(StatusPath), JsonOptions)
-            ?? throw new InvalidDataException("The LucyServer runtime status file is empty.");
+            ?? throw new InvalidDataException("The LucyVNC Server runtime status file is empty.");
     }
 
     private static void ApplyFileAcl(string path, string? readableUserSid)

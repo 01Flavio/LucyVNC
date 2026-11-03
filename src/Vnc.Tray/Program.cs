@@ -9,45 +9,58 @@ namespace Vnc.Tray;
 internal static class Program
 {
     [STAThread]
-    private static void Main()
+    private static void Main(string[] args)
     {
+        ApplicationConfiguration.Initialize();
+        if (args.Length > 0 &&
+            (string.Equals(args[0], "--validate-setup", StringComparison.OrdinalIgnoreCase) ||
+             string.Equals(args[0], "--provision-setup", StringComparison.OrdinalIgnoreCase)))
+        {
+            Environment.ExitCode = ServerSetupProvisioner.Run(args);
+            return;
+        }
+
+        if (args.Length == 1 && string.Equals(args[0], "--configure", StringComparison.OrdinalIgnoreCase))
+        {
+            Application.Run(new LucyVncServerConfigurationForm());
+            return;
+        }
+
         var sid = WindowsIdentity.GetCurrent().User?.Value
-            ?? throw new InvalidOperationException("Could not resolve the LucyServer tray user SID.");
-        using var singleInstance = new Mutex(true, $@"Local\LucyVNC.ServerTray.{sid}", out var createdNew);
+            ?? throw new InvalidOperationException("Could not resolve the LucyVNC Server user SID.");
+        using var singleInstance = new Mutex(true, $@"Local\LucyVNC.Server.{sid}", out var createdNew);
         if (!createdNew)
         {
             return;
         }
 
-        ApplicationConfiguration.Initialize();
-        using var context = new LucyTrayContext();
+        using var context = new LucyVncServerTrayContext();
         Application.Run(context);
     }
 }
 
-internal sealed class LucyTrayContext : ApplicationContext
+internal sealed class LucyVncServerTrayContext : ApplicationContext
 {
     private const string RunKeyPath = @"Software\Microsoft\Windows\CurrentVersion\Run";
-    private const string RunValueName = "LucyVNC.ServerTray";
-    private const string LegacyRunValueName = "LucyVNC.SessionAgent";
+    private const string RunValueName = "LucyVNC.Server";
+    private const string LegacyRunValueName = "LucyVNC.ServerTray";
+    private const string PreviousAgentRunValueName = "LucyVNC.SessionAgent";
     private const string LocalSystemSid = "S-1-5-18";
     private readonly NotifyIcon _icon;
     private readonly ToolStripMenuItem _serviceStatusItem;
     private readonly ToolStripMenuItem _agentStatusItem;
     private readonly ToolStripMenuItem _autoStartItem;
     private readonly System.Windows.Forms.Timer _statusTimer;
-    private readonly string _managerPath;
     private readonly string _serviceScriptsPath;
     private readonly string _agentPath;
     private Process? _agentSupervisor;
     private bool _shutdown;
 
-    public LucyTrayContext()
+    public LucyVncServerTrayContext()
     {
         var applicationDirectory = AppContext.BaseDirectory;
-        _managerPath = Path.Combine(applicationDirectory, "LucyViewer.exe");
         _serviceScriptsPath = Path.Combine(applicationDirectory, "Scripts");
-        _agentPath = Path.Combine(applicationDirectory, "Agent", "Vnc.Agent.exe");
+        _agentPath = Path.Combine(applicationDirectory, "LucyVNC.Agent.exe");
 
         var menu = new ContextMenuStrip();
         _serviceStatusItem = AddStatusItem(menu, "Serviço: consultando...");
@@ -60,8 +73,8 @@ internal sealed class LucyTrayContext : ApplicationContext
         stopItem.Click += (_, _) =>
         {
             if (MessageBox.Show(
-                    "Parar o compartilhamento persistente? O serviço poderá ser iniciado novamente pela bandeja ou pelo Manager.",
-                    "LucyServer",
+                    "Parar o compartilhamento persistente? O serviço poderá ser iniciado novamente por esta bandeja ou pelo aplicativo de configuração.",
+                    "LucyVNC Server",
                     MessageBoxButtons.YesNo,
                     MessageBoxIcon.Warning) == DialogResult.Yes)
             {
@@ -70,9 +83,9 @@ internal sealed class LucyTrayContext : ApplicationContext
         };
         menu.Items.Add(stopItem);
         menu.Items.Add(new ToolStripSeparator());
-        var openManagerItem = new ToolStripMenuItem("Abrir configurações no LucyVNC Manager");
-        openManagerItem.Click += (_, _) => OpenManager();
-        menu.Items.Add(openManagerItem);
+        var openSettingsItem = new ToolStripMenuItem("Abrir LucyVNC Server Configuration");
+        openSettingsItem.Click += (_, _) => OpenConfiguration();
+        menu.Items.Add(openSettingsItem);
         _autoStartItem = new ToolStripMenuItem("Iniciar bandeja e Agent no logon")
         {
             CheckOnClick = true,
@@ -85,15 +98,15 @@ internal sealed class LucyTrayContext : ApplicationContext
         exitItem.Click += (_, _) => ExitTray();
         menu.Items.Add(exitItem);
 
-        var icon = System.Drawing.Icon.ExtractAssociatedIcon(_managerPath) ?? System.Drawing.SystemIcons.Application;
+        var icon = System.Drawing.Icon.ExtractAssociatedIcon(Environment.ProcessPath!) ?? System.Drawing.SystemIcons.Application;
         _icon = new NotifyIcon
         {
             Icon = icon,
-            Text = "LucyServer",
+            Text = "LucyVNC Server",
             ContextMenuStrip = menu,
             Visible = true,
         };
-        _icon.DoubleClick += (_, _) => OpenManager();
+        _icon.DoubleClick += (_, _) => OpenConfiguration();
 
         _statusTimer = new System.Windows.Forms.Timer { Interval = 5000 };
         _statusTimer.Tick += (_, _) => RefreshStatus();
@@ -227,28 +240,32 @@ internal sealed class LucyTrayContext : ApplicationContext
         }
     }
 
-    private void OpenManager()
+    private void OpenConfiguration()
     {
-        if (!File.Exists(_managerPath))
+        var existing = Application.OpenForms.OfType<LucyVncServerConfigurationForm>().FirstOrDefault();
+        if (existing is not null)
         {
-            _agentStatusItem.Text = $"LucyVNC Manager was not found: {_managerPath}";
+            existing.WindowState = FormWindowState.Normal;
+            existing.Activate();
             return;
         }
 
         try
         {
-            Process.Start(new ProcessStartInfo(_managerPath) { UseShellExecute = true });
+            new LucyVncServerConfigurationForm().Show();
         }
-        catch (Exception exception) when (exception is IOException or UnauthorizedAccessException or System.ComponentModel.Win32Exception or InvalidOperationException)
+        catch (Exception exception) when (exception is IOException or UnauthorizedAccessException or InvalidOperationException)
         {
-            _agentStatusItem.Text = LimitText($"LucyVNC Manager não abriu: {exception.Message}");
+            _agentStatusItem.Text = LimitText($"LucyVNC Server Configuration não abriu: {exception.Message}");
         }
     }
 
     private static bool IsAutoStartEnabled()
     {
         using var key = Registry.CurrentUser.OpenSubKey(RunKeyPath, writable: false);
-        return key?.GetValue(RunValueName) is string || key?.GetValue(LegacyRunValueName) is string;
+        return key?.GetValue(RunValueName) is string ||
+               key?.GetValue(LegacyRunValueName) is string ||
+               key?.GetValue(PreviousAgentRunValueName) is string;
     }
 
     private void AutoStartCheckedChanged(object? sender, EventArgs e)
@@ -259,7 +276,7 @@ internal sealed class LucyTrayContext : ApplicationContext
         }
         catch (Exception exception) when (exception is UnauthorizedAccessException or IOException or System.Security.SecurityException or InvalidOperationException)
         {
-            MessageBox.Show(exception.Message, "LucyServer", MessageBoxButtons.OK, MessageBoxIcon.Error);
+            MessageBox.Show(exception.Message, "LucyVNC Server", MessageBoxButtons.OK, MessageBoxIcon.Error);
             _autoStartItem.CheckedChanged -= AutoStartCheckedChanged;
             _autoStartItem.Checked = !_autoStartItem.Checked;
             _autoStartItem.CheckedChanged += AutoStartCheckedChanged;
@@ -280,6 +297,7 @@ internal sealed class LucyTrayContext : ApplicationContext
         }
 
         key.DeleteValue(LegacyRunValueName, throwOnMissingValue: false);
+        key.DeleteValue(PreviousAgentRunValueName, throwOnMissingValue: false);
     }
 
     private void ExitTray()

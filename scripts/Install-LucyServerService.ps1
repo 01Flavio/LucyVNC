@@ -33,7 +33,7 @@ New-Service `
     -DisplayName $script:LucyServerDisplayName `
     -BinaryPathName $quotedExecutablePath `
     -StartupType Automatic `
-    -Description 'LucyServer opens an authenticated loopback RFB listener when remote sharing is enabled; an interactive-session agent and IPC are not implemented.' |
+    -Description 'LucyServer Worker. Desktop sharing requires a separately running interactive Agent; SCM-managed Agent launch is not implemented.' |
     Out-Null
 
 # SCM performs at most three delayed restarts for failures, then takes no action.
@@ -52,4 +52,4 @@ Invoke-LvcScCommand -Arguments @(
     '1'
 )
 
-Write-Host "$script:LucyServerDisplayName was installed as Automatic and left stopped. Remote sharing opens only when LUCYVNC_VNC_PASSWORD holds a valid VNC password; it remains unavailable until then."
+Write-Host "$script:LucyServerDisplayName was installed as Automatic and left stopped. Installation does not configure credentials or start an interactive Agent; service-managed desktop sharing is not available in this build."

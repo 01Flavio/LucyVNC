@@ -75,7 +75,7 @@ finally {
 
 Connect LucyViewer to `127.0.0.1:5901`. Stop the Worker by entering `STOP` in window 2, then stop the Agent with Ctrl+C in window 1. The password exists in the Worker process environment only; do not capture or share diagnostic output from a test containing sensitive information. Do not use this procedure on a production desktop.
 
-For optional SCM lifecycle testing only, publish the executable:
+For optional SCM lifecycle testing only, publish the executable. Installing or starting this Worker does not configure a production VNC credential or launch an interactive Agent; SCM state alone does not mean desktop sharing is available:
 
 ```powershell
 dotnet publish "src/Vnc.Service/Vnc.Service.csproj" -c Release -r win-x64 --self-contained true
@@ -91,4 +91,4 @@ In an elevated PowerShell session, use the scripts below. Installation is Automa
 .\scripts\Uninstall-LucyServerService.ps1
 ```
 
-Do not register `LucyViewer.exe` or `Vnc.Agent.exe` as a Windows Service: WPF, screen capture, and `SendInput` require the user's interactive session, while a Windows Service normally runs in Session 0. Service/Agent IPC is authenticated by Windows user SID and protected with pipe ACLs, but is not a binary-signing boundary and currently has only same-user development validation. Session 0 provides no supported access to the signed-in desktop; secure desktop, UAC, and pre-login control are not implemented.
+Do not register `LucyViewer.exe` or `Vnc.Agent.exe` as a Windows Service: WPF, screen capture, and `SendInput` require the user's interactive session, while a Windows Service normally runs in Session 0. The versioned Service/Agent IPC checks Windows user SIDs and protects the pipe with an ACL, but has only same-user development validation; it is not a binary-signing boundary. The SCM-to-interactive-session Agent launcher, durable service credential management, and login/logout/lock/session-switch lifecycle are not implemented. Session 0 provides no supported access to the signed-in desktop; secure desktop, UAC, and pre-login control are not implemented.

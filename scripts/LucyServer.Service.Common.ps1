@@ -20,7 +20,7 @@ function Assert-LvcWindowsAdministrator {
 }
 
 function Write-LvcServiceNotice {
-    Write-Warning 'LucyServer opens an authenticated loopback RFB listener when remote sharing is enabled; its interactive-session agent and authenticated IPC are not implemented, so the worker provides no usable VNC sharing without a valid VNC password. These scripts do not create firewall rules.'
+    Write-Warning 'The Worker and Agent use versioned named-pipe IPC with Windows SID checks, but only same-user development operation is validated. SCM-to-interactive-session Agent launch, production credential storage, and session lifecycle management are not implemented; service state does not prove that an RFB listener is available. These scripts do not create firewall rules.'
 }
 
 function Get-LvcService {

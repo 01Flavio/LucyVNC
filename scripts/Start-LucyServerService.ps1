@@ -8,11 +8,11 @@ Write-LvcServiceNotice
 $service = Assert-LvcServiceInstalled
 
 if ($service.Status -eq [System.ServiceProcess.ServiceControllerStatus]::Running) {
-    Write-Host "$script:LucyServerDisplayName is already running. Remote sharing opens only when LUCYVNC_VNC_PASSWORD holds a valid VNC password; no listener was opened."
+    Write-Host "$script:LucyServerDisplayName is already running. SCM state does not establish that an RFB listener or interactive Agent is available."
     return
 }
 
 if ($PSCmdlet.ShouldProcess($script:LucyServerDisplayName, 'Start Windows service')) {
     Start-Service -InputObject $service -ErrorAction Stop
-    Write-Host "$script:LucyServerDisplayName started. Remote sharing opens only when LUCYVNC_VNC_PASSWORD holds a valid VNC password; no listener was opened."
+    Write-Host "$script:LucyServerDisplayName started. This does not start an interactive Agent or establish that an RFB listener is available."
 }

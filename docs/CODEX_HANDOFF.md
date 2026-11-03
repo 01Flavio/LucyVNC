@@ -70,7 +70,7 @@ Corrigir o fluxo do Inno Setup para permitir `0.0.0.0` no modo confirmado, mante
 3. Validação visual/instalação do assistente permanece manual, sem instalar serviço real ou alterar firewall.
 
 ## Próxima ação exata
-Executar `git add docs/CODEX_HANDOFF.md` e criar commit local de documentação; depois verificar `git status --short --branch`.
+Para o trabalho 2.4.2, o handoff foi commitado localmente em `33a5bc7`; a validação descrita abaixo corresponde à tarefa seguinte 2.4.3.
 
 ## LucyVNC 2.4.3 — correção e validação
 
@@ -108,10 +108,13 @@ Investigar transmissão parcial do framebuffer RFB em 1920×1080 e desconexões 
 - `docs/CODEX_HANDOFF.md`
 
 ### Commit
-- Pendente; criar commit local após verificação final do diff. Não fazer push.
+- Implementação validada: `62bcc0b` (`fix: validate RFB framebuffer updates and cover Full HD`).
+- Este registro final será commitado separadamente; não fazer push.
 
 ### Pendências ordenadas
 1. Reproduzir com captura física/GDI em 1920×1080 e correlacionar os logs do Server com uma falha real de transmissão; a causa original relatada não foi identificada conclusivamente.
 2. Executar TightVNC Viewer real contra o instalador 2.4.3 e validar imagem/atualizações; mouse/teclado também precisam de comprovação separada.
-3. Atualizar o hash/commit deste handoff após o commit local.
 - Não alterar firewall, instalar/iniciar serviços reais ou fazer push.
+
+### Próxima ação exata
+Reproduzir primeiro o problema em uma sessão de teste com TightVNC Viewer e captura GDI real; depois correlacionar os logs do Server. Não repetir restore/build/test/publish, que já passaram para `62bcc0b`, salvo se o código for alterado.

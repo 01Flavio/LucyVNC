@@ -38,10 +38,26 @@ public class RfbProtocolTests
 
         Assert.Equal(16, response.Length);
         Assert.True(VncAuthentication.VerifyResponse("password", challenge, response));
-        Assert.True(VncAuthentication.VerifyResponse("password-more", challenge, response));
+        Assert.False(VncAuthentication.VerifyResponse("password-more", challenge, response));
+        Assert.Throws<ArgumentException>(() => VncAuthentication.ComputeResponse("password-more", challenge));
         Assert.False(VncAuthentication.VerifyResponse("passw0rd", challenge, response));
         Assert.False(VncAuthentication.VerifyResponse("password", challenge, response.AsSpan(0, 8)));
     }
+
+    [Theory]
+    [InlineData("", false)]
+    [InlineData("12345", false)]
+    [InlineData("123456", true)]
+    [InlineData("1234567", true)]
+    [InlineData("12345678", true)]
+    [InlineData("123456789", false)]
+    [InlineData("123456789012", false)]
+    [InlineData("1234567890123456", false)]
+    [InlineData("12345678901234567", false)]
+    [InlineData("abcde\n", false)]
+    [InlineData("passwörd", false)]
+    public void ServerPasswordPolicyIsSixToEightPrintableAsciiCharacters(string password, bool expected) =>
+        Assert.Equal(expected, VncAuthentication.IsValidServerPassword(password));
 
     [Fact]
     public void PixelFormatUsesBigEndianWireFieldsAndRoundTrips()

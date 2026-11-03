@@ -1,5 +1,5 @@
 #define AppName "LucyVNC Setup"
-#define AppVersion "2.4.1"
+#define AppVersion "2.4.2"
 #define AppPublisher "01Flavio"
 
 [Setup]
@@ -74,6 +74,7 @@ var
   InstallServiceCheck: TNewCheckBox;
   StartServiceCheck: TNewCheckBox;
   NetworkInterfacesPath: string;
+  WildcardWarningConfirmed: Boolean;
 
 function SetEnvironmentVariableW(Name, Value: string): Boolean;
   external 'SetEnvironmentVariableW@kernel32.dll stdcall';
@@ -104,6 +105,8 @@ begin
     (ResultCode = 0);
 end;
 
+function GetEffectiveBindAddress: string; forward;
+
 function RunServerSetupCommand(const Operation: string): Boolean;
 var
   ResultCode: Integer;
@@ -111,7 +114,7 @@ var
 begin
   CommandLine := Operation + ' ' +
     BooleanText(ShareEnabledCheck.Checked) + ' ' +
-    AddQuotes(Trim(ServerConfigurationPage.Values[0])) + ' ' +
+    AddQuotes(GetEffectiveBindAddress) + ' ' +
     Trim(ServerConfigurationPage.Values[1]) + ' ' +
     AddQuotes(Trim(ServerConfigurationPage.Values[2])) + ' ' +
     BooleanText(ServiceAutomaticCheck.Checked) + ' ' +
@@ -133,6 +136,26 @@ begin
       ResultCode) and (ResultCode = 0);
   finally
     SetEnvironmentVariableW(PasswordEnvironmentVariable, '');
+  end;
+end;
+
+function GetEffectiveBindAddress: string;
+begin
+  case NetworkModeCombo.ItemIndex of
+    0: Result := '127.0.0.1';
+    1: Result := Trim(ServerConfigurationPage.Values[0]);
+    2: Result := '0.0.0.0';
+  else
+    Result := '';
+  end;
+end;
+
+procedure NetworkModeChanged(Sender: TObject);
+begin
+  WildcardWarningConfirmed := False;
+  if NetworkModeCombo.ItemIndex <> 2 then
+  begin
+    AllInterfacesCheck.Checked := False;
   end;
 end;
 
@@ -468,19 +491,19 @@ begin
     wpSelectComponents,
     'LucyVNC Server Configuration',
     'Configure o LucyVNC Server independente',
-    'A senha é enviada somente em memória ao provisionador e protegida antes de ser gravada. VNC clássico não cifra o tráfego.');
-  ServerConfigurationPage.Add('Endereço IPv4 da interface específica (quando escolhida)', False);
+    'VNC clássico usa senha ASCII de 6 a 8 caracteres; senhas maiores não são aceitas porque o protocolo ignora bytes após o oitavo. O tráfego não é criptografado; use VPN para conexões remotas.');
+  ServerConfigurationPage.Add('Endereço IPv4 para modo específico (modo padrão usa 0.0.0.0)', False);
   ServerConfigurationPage.Add('Porta TCP', False);
   ServerConfigurationPage.Add('Usuário Windows autorizado para o Agent', False);
-  ServerConfigurationPage.Add('Senha VNC (exatamente 8 caracteres ASCII)', True);
-  ServerConfigurationPage.Values[0] := '127.0.0.1';
+  ServerConfigurationPage.Add('Senha clássica VNC (6 a 8 caracteres ASCII)', True);
+  ServerConfigurationPage.Values[0] := '0.0.0.0';
   ServerConfigurationPage.Values[1] := '5900';
   ServerConfigurationPage.Values[2] := ExpandConstant('{username}');
 
   ServerOptionsPage := CreateCustomPage(
     ServerConfigurationPage.ID,
     'LucyVNC Server Options',
-    'Escolha o comportamento do compartilhamento e autorize separadamente a instalação do serviço.');
+    'O LucyVNC Server está configurado para escutar em todas as interfaces IPv4. A autenticação VNC clássica não criptografa o tráfego. Utilize redes confiáveis ou VPN e não exponha a porta diretamente à internet. Escolha um escopo de rede e confirme explicitamente antes de continuar.');
 
   NetworkModeCombo := TNewComboBox.Create(ServerOptionsPage);
   NetworkModeCombo.Parent := ServerOptionsPage.Surface;
@@ -491,7 +514,7 @@ begin
   NetworkModeCombo.Items.Add('Somente este computador (127.0.0.1)');
   NetworkModeCombo.Items.Add('Interface IPv4 específica (informe o endereço acima)');
   NetworkModeCombo.Items.Add('Todas as interfaces IPv4 (0.0.0.0; LAN e VPN)');
-  NetworkModeCombo.ItemIndex := 0;
+  NetworkModeCombo.ItemIndex := 2;
 
   NetworkInterfacesInfo := TNewStaticText.Create(ServerOptionsPage);
   NetworkInterfacesInfo.Parent := ServerOptionsPage.Surface;
@@ -510,6 +533,7 @@ begin
   AllInterfacesCheck.Width := ScaleX(570);
   AllInterfacesCheck.Caption := 'Confirmo o bind em todas as interfaces IPv4. Não altera firewall, roteador ou UPnP.';
   AllInterfacesCheck.Checked := False;
+  NetworkModeCombo.OnChange := @NetworkModeChanged;
 
   ShareEnabledCheck := TNewCheckBox.Create(ServerOptionsPage);
   ShareEnabledCheck.Parent := ServerOptionsPage.Surface;
@@ -562,6 +586,7 @@ var
   Port: Integer;
   Username: string;
   Index: Integer;
+  BindAddress: string;
 begin
   Result := True;
   if (CurPageID = wpSelectComponents) and IsServiceInstalled and not IsServerSelected then
@@ -573,14 +598,15 @@ begin
 
   if CurPageID = ServerOptionsPage.ID then
   begin
+    BindAddress := GetEffectiveBindAddress;
     case NetworkModeCombo.ItemIndex of
       0:
-        ServerConfigurationPage.Values[0] := '127.0.0.1';
+        BindAddress := '127.0.0.1';
       1:
         begin
-          if (Pos(':', Trim(ServerConfigurationPage.Values[0])) > 0) or
-            not IsAllowedBindAddress(Trim(ServerConfigurationPage.Values[0])) or
-            (CompareText(Trim(ServerConfigurationPage.Values[0]), '127.0.0.1') = 0) then
+          if (Pos(':', BindAddress) > 0) or
+            not IsAllowedBindAddress(BindAddress) or
+            (CompareText(BindAddress, '127.0.0.1') = 0) then
           begin
             MsgBox('Informe na página anterior o IPv4 privado/VPN da interface local desejada.', mbError, MB_OK);
             Result := False;
@@ -591,11 +617,22 @@ begin
         begin
           if not AllInterfacesCheck.Checked then
           begin
-            MsgBox('O bind 0.0.0.0 exige confirmação explícita. Isso não abre o firewall nem configura o roteador.', mbError, MB_OK);
+            MsgBox('Marque a confirmação explícita para usar 0.0.0.0. Isso não abre o firewall, não configura o roteador nem habilita UPnP.', mbError, MB_OK);
             Result := False;
             Exit;
           end;
-          ServerConfigurationPage.Values[0] := '0.0.0.0';
+          if not WildcardWarningConfirmed then
+          begin
+            if MsgBox(
+                'O LucyVNC Server está configurado para escutar em todas as interfaces IPv4. A autenticação VNC clássica não criptografa o tráfego. Utilize redes confiáveis ou VPN e não exponha a porta diretamente à internet. Continuar?',
+                mbConfirmation,
+                MB_YESNO) <> IDYES then
+            begin
+              Result := False;
+              Exit;
+            end;
+            WildcardWarningConfirmed := True;
+          end;
         end;
     else
     begin
@@ -605,7 +642,7 @@ begin
     end;
 
     if not IsSetupPortAvailable(
-        Trim(ServerConfigurationPage.Values[0]),
+        BindAddress,
         StrToIntDef(Trim(ServerConfigurationPage.Values[1]), 0)) then
     begin
       MsgBox('A porta TCP selecionada não está disponível nesse endereço. Escolha outra porta ou encerre o aplicativo que a está usando.', mbError, MB_OK);
@@ -637,27 +674,22 @@ begin
     Exit;
   end;
 
-  if (Length(ServerConfigurationPage.Values[3]) <> 8) then
+  if (Length(ServerConfigurationPage.Values[3]) < 6) or
+    (Length(ServerConfigurationPage.Values[3]) > 8) then
   begin
-    MsgBox('A senha VNC precisa ter exatamente oito caracteres ASCII.', mbError, MB_OK);
+    MsgBox('A senha clássica VNC precisa ter de 6 a 8 caracteres ASCII. O protocolo não utiliza bytes após o oitavo.', mbError, MB_OK);
     Result := False;
     Exit;
   end;
   for Index := 1 to Length(ServerConfigurationPage.Values[3]) do
   begin
-    if Ord(ServerConfigurationPage.Values[3][Index]) > 127 then
+    if (Ord(ServerConfigurationPage.Values[3][Index]) < 32) or
+      (Ord(ServerConfigurationPage.Values[3][Index]) > 126) then
     begin
-      MsgBox('A senha VNC precisa conter somente caracteres ASCII.', mbError, MB_OK);
+      MsgBox('A senha clássica VNC precisa conter somente caracteres ASCII imprimíveis.', mbError, MB_OK);
       Result := False;
       Exit;
     end;
-  end;
-
-  if not IsAllowedBindAddress(Trim(ServerConfigurationPage.Values[0])) then
-  begin
-    MsgBox('Use loopback ou um endereço IP privado/VPN/link-local. Endereços públicos e nomes DNS não são aceitos.', mbError, MB_OK);
-    Result := False;
-    Exit;
   end;
 
   if StrToIntDef(Trim(ServerConfigurationPage.Values[1]), 0) < 1 then
@@ -724,6 +756,12 @@ begin
       end;
     end;
     Exit;
+  end;
+
+  if not RunServerSetupCommand('--validate-setup') then
+  begin
+    ServerConfigurationPage.Values[3] := '';
+    RaiseException('A configuração final do LucyVNC Server foi rejeitada pelo validador. Nenhuma credencial foi aplicada; revise rede, porta e senha e execute novamente.');
   end;
 
   ProvisionSucceeded := RunServerSetupCommand('--provision-setup');

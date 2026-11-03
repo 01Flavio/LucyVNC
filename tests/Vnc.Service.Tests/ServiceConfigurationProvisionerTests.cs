@@ -46,13 +46,19 @@ public sealed class ServiceConfigurationProvisionerTests
     }
 
     [Fact]
-    public void InvalidServicePasswordIsRejectedBeforeRequestCreation()
+    public void ServicePasswordPolicyAcceptsSixThroughEightAndRejectsOtherLengths()
     {
-        var exception = Assert.Throws<InvalidDataException>(() =>
-            ServiceConfigurationProvisioner.WriteProtectedRequest(
-                new ServiceConfigurationRequest(ServiceConfiguration.SafeDefaults, "short")));
+        foreach (var password in new[] { "123456", "1234567", "12345678" })
+        {
+            ServiceConfigurationProvisioner.ValidatePassword(password);
+        }
 
-        Assert.Contains("eight ASCII characters", exception.Message, StringComparison.Ordinal);
+        foreach (var password in new[] { "", "12345", "123456789", "123456789012", "1234567890123456", "12345678901234567", "abcde\n" })
+        {
+            var exception = Assert.Throws<InvalidDataException>(() =>
+                ServiceConfigurationProvisioner.ValidatePassword(password));
+            Assert.Contains("6 to 8", exception.Message, StringComparison.Ordinal);
+        }
     }
 
     [Fact]
@@ -61,7 +67,7 @@ public sealed class ServiceConfigurationProvisionerTests
         var exception = Assert.Throws<InvalidDataException>(() =>
             ServiceConfigurationProvisioner.ValidatePassword(null!));
 
-        Assert.Contains("eight ASCII characters", exception.Message, StringComparison.Ordinal);
+        Assert.Contains("6 to 8", exception.Message, StringComparison.Ordinal);
     }
 
     [Fact]

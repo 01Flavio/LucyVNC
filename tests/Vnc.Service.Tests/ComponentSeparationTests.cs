@@ -94,6 +94,23 @@ public sealed class ComponentSeparationTests
             .Select(match => match.Value), line => line.Contains("Components: manager", StringComparison.Ordinal));
     }
 
+    [Fact]
+    public void SetupDefaultsToWildcardButRequiresConfirmationAndUsesProvisionerValidation()
+    {
+        var root = FindRepositoryRoot();
+        var setup = File.ReadAllText(Path.Combine(root, "installer", "LucyVNC.iss"));
+
+        Assert.Contains("ServerConfigurationPage.Values[0] := '0.0.0.0';", setup, StringComparison.Ordinal);
+        Assert.Contains("NetworkModeCombo.ItemIndex := 2;", setup, StringComparison.Ordinal);
+        Assert.Contains("AllInterfacesCheck.Checked := False;", setup, StringComparison.Ordinal);
+        Assert.Contains("function GetEffectiveBindAddress", setup, StringComparison.Ordinal);
+        Assert.Contains("AddQuotes(GetEffectiveBindAddress)", setup, StringComparison.Ordinal);
+        Assert.Contains("WildcardWarningConfirmed", setup, StringComparison.Ordinal);
+        Assert.Contains("RunServerSetupCommand('--validate-setup')", setup, StringComparison.Ordinal);
+        Assert.Contains("A autenticação VNC clássica não criptografa o tráfego. Utilize redes confiáveis ou VPN e não exponha a porta diretamente à internet.", setup, StringComparison.Ordinal);
+        Assert.DoesNotContain("ServerConfigurationPage.Values[0] := '127.0.0.1';", setup, StringComparison.Ordinal);
+    }
+
     private static string FindRepositoryRoot()
     {
         for (var directory = new DirectoryInfo(AppContext.BaseDirectory); directory is not null; directory = directory.Parent)

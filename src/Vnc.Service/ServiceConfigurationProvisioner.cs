@@ -4,6 +4,7 @@ using System.Security.Cryptography;
 using System.Security.Principal;
 using System.Text.Json;
 using System.Text;
+using Vnc.Protocol;
 
 namespace Vnc.Service;
 
@@ -140,9 +141,10 @@ public static class ServiceConfigurationProvisioner
 
     internal static void ValidatePassword(string password)
     {
-        if (string.IsNullOrEmpty(password) || password.Length != 8 || password.Any(character => character > 0x7f))
+        if (!VncAuthentication.IsValidServerPassword(password))
         {
-            throw new InvalidDataException("The service password must contain exactly eight ASCII characters.");
+            throw new InvalidDataException(
+                "The LucyVNC Server password must contain 6 to 8 printable ASCII characters. Classic VNC Authentication cannot use more than eight.");
         }
     }
 

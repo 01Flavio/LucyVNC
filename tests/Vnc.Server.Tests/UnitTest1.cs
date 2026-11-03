@@ -139,13 +139,26 @@ public class ServerTests
     }
 
     [Fact]
-    public void ServerRequiresEightCharacterPasswordAndExplicitBindAddress()
+    public void ServerRequiresSixToEightCharacterPasswordAndExplicitBindAddress()
     {
         Assert.Throws<ArgumentException>(() => new VncServer(new ConnectionSettings
         {
             Password = "short",
             BindAddress = "127.0.0.1",
         }, new FakeScreenCapture(), new RecordingInput()));
+        Assert.Throws<ArgumentException>(() => new VncServer(new ConnectionSettings
+        {
+            Password = "password9",
+            BindAddress = "127.0.0.1",
+        }, new FakeScreenCapture(), new RecordingInput()));
+        foreach (var password in new[] { "123456", "1234567", "12345678" })
+        {
+            using var server = new VncServer(new ConnectionSettings
+            {
+                Password = password,
+                BindAddress = "127.0.0.1",
+            }, new FakeScreenCapture(), new RecordingInput());
+        }
         Assert.Throws<ArgumentException>(() => new VncServer(new ConnectionSettings
         {
             Password = "password",

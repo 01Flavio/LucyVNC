@@ -17,12 +17,14 @@ The output is `artifacts\LucyVNC-Setup-2.4.1-x64.exe`. The component page offers
 
 When Server is selected, the setup page asks for:
 
-- Sharing enabled/disabled, network mode (this computer, a specific local interface, or all IPv4 interfaces), and TCP port (default `5900`).
-- VNC password (exactly eight ASCII characters) and the authorized Windows user.
+- Sharing enabled/disabled, network mode (default: all IPv4 interfaces, `0.0.0.0`; alternatives: this computer or a specific local interface), and TCP port (default `5900`).
+- Classic VNC password of 6–8 printable ASCII characters and the authorized Windows user.
 - Automatic or manual service startup and optional tray/Agent startup at that user's logon.
 - Separate explicit consent to install or update the Windows service, and an optional choice to start sharing after setup.
 
-The setup lists available IPv4 interface addresses and adapter names where available, validates the selected IP/network scope, port availability, password, and Windows account before continuing, and checks the port again immediately before protected provisioning. An existing LucyVNC Server listener using the same address/port is allowed during an update; other conflicts are rejected. Selecting all interfaces sets the listener to `0.0.0.0` and requires separate explicit confirmation. This listens on local IPv4 interfaces only; it does not configure firewall, routing, a router, or UPnP. VNC classic traffic is unencrypted, so use a trusted LAN or VPN and avoid exposing it directly to the Internet. Agent logon startup is restricted to the currently signed-in account; the selected account must match that session when this option is enabled. Service install/update is skipped unless Server is selected and the install-consent checkbox is accepted. Setup never adds firewall rules.
+The setup lists available IPv4 interface addresses and adapter names where available, validates the selected IP/network scope, port availability, password, and Windows account before continuing, and checks the final configuration with the Server provisioner immediately before protected provisioning. An existing LucyVNC Server listener using the same address/port is allowed during an update; other conflicts are rejected. Selecting all interfaces sets the listener to `0.0.0.0`, requires a separately unchecked confirmation box, and presents an additional security prompt before continuing. This listens on local IPv4 interfaces only; it does not configure firewall, routing, a router, or UPnP. VNC classic traffic is unencrypted, so use a trusted LAN or VPN and avoid exposing it directly to the Internet. Agent logon startup is restricted to the currently signed-in account; the selected account must match that session when this option is enabled. Service install/update is skipped unless Server is selected and the install-consent checkbox is accepted. Setup never adds firewall rules.
+
+The current Server supports only classic RFB Security Type 2. DES uses at most the first eight password characters, so LucyVNC Server accepts 6–8 printable ASCII characters and rejects longer input; it does not offer a 16-character password mode. TLS/VeNCrypt and a modern authenticated transport are pending. To protect traffic, keep the listener on loopback or use a separately configured, trusted VPN tunnel. Compatibility with traditional VNC clients is retained through the standard classic security type.
 
 The password is not placed in process arguments, installer logs, or plaintext files. During setup it is passed from the password control through the installer process environment to the Server provisioner. The provisioner clears the environment value, creates a DPAPI-protected request with a restricted ACL, and stores the durable credential as DPAPI LocalMachine ciphertext with SYSTEM/Administrators ACLs. The protected request is deleted after application. `LucyVNC.Server.exe` and its configuration interface can also be used later to manage the Server independently.
 
@@ -47,7 +49,7 @@ Locking or switching away from the supported desktop closes the listener. Secure
 The service may be configured Automatic or Manual. Automatic service start at boot does not make desktop sharing available before the authorized user logs in. To validate actual behavior manually:
 
 1. Install only **LucyVNC Server** and select an authorized account that will log in interactively.
-2. Enable sharing, use a temporary eight-character password, keep bind at `127.0.0.1` for the first check, and consent to service installation.
+2. Enable sharing, use a temporary 6–8-character password, keep bind at `127.0.0.1` for the first check, and consent to service installation.
 3. Optionally select Agent/tray startup at logon and start sharing after setup.
 4. Verify the tray reports the Agent authenticated and RFB listener ready. Connect a Viewer to `127.0.0.1:5900`; validate image refresh and non-destructive mouse/keyboard input.
 5. Close the tray and confirm the Viewer session continues. Reopen Server Configuration and check that it reports the actual service/runtime status.
@@ -79,7 +81,7 @@ $sid = [Security.Principal.WindowsIdentity]::GetCurrent().User.Value
 $env:LUCYVNC_AGENT_SID = $sid
 $env:LUCYVNC_AGENT_PIPE = "LucyVNCAgent"
 $env:LUCYVNC_SERVICE_CONFIG = Join-Path $env:LOCALAPPDATA "LucyVNC\Development\service.json"
-$securePassword = Read-Host "Temporary VNC password (8 ASCII characters)" -AsSecureString
+$securePassword = Read-Host "Temporary VNC password (6-8 printable ASCII characters)" -AsSecureString
 $passwordBuffer = [Runtime.InteropServices.Marshal]::SecureStringToBSTR($securePassword)
 try {
     $env:LUCYVNC_VNC_PASSWORD = [Runtime.InteropServices.Marshal]::PtrToStringBSTR($passwordBuffer)

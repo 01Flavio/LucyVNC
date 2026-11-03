@@ -4,6 +4,7 @@ using System.Net;
 using System.Windows.Forms;
 using Microsoft.Win32;
 using Vnc.Service;
+using Vnc.Protocol;
 
 namespace Vnc.Tray;
 
@@ -28,9 +29,10 @@ internal static class ServerSetupProvisioner
             var configuration = CreateConfiguration(args, out var agentAtLogon);
             password = Environment.GetEnvironmentVariable(PasswordEnvironmentVariable);
             Environment.SetEnvironmentVariable(PasswordEnvironmentVariable, null, EnvironmentVariableTarget.Process);
-            if (string.IsNullOrEmpty(password) || password.Length != 8 || password.Any(character => character > 0x7f))
+            if (password is null || !VncAuthentication.IsValidServerPassword(password))
             {
-                throw new InvalidDataException("A senha VNC precisa ter exatamente oito caracteres ASCII.");
+                throw new InvalidDataException(
+                    "A senha do LucyVNC Server precisa ter de 6 a 8 caracteres ASCII imprimíveis. A autenticação VNC clássica não usa mais de oito.");
             }
 
             if (string.Equals(args[0], "--validate-setup", StringComparison.OrdinalIgnoreCase))

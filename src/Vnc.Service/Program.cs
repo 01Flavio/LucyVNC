@@ -297,7 +297,7 @@ internal sealed class ServiceWorker : BackgroundService
             return null;
         }
 
-        return password.Length == 8 && password.All(character => character <= 0x7f) ? password : null;
+        return Vnc.Protocol.VncAuthentication.IsValidServerPassword(password) ? password : null;
     }
 
     private static ConnectionSettings CreateConnectionSettings(ServiceConfiguration configuration, string password)

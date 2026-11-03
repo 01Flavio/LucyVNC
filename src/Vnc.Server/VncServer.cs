@@ -512,9 +512,11 @@ public sealed class VncServer : IDisposable
             throw new ArgumentOutOfRangeException(nameof(settings.Port));
         }
 
-        if (settings.Password.Length != 8 || settings.Password.Any(character => character > 0x7f))
+        if (!VncAuthentication.IsValidServerPassword(settings.Password))
         {
-            throw new ArgumentException("VNC Authentication requires an exactly eight-character ASCII password in this application.", nameof(settings));
+            throw new ArgumentException(
+                "The LucyVNC Server requires a password of 6 to 8 printable ASCII characters. Classic VNC Authentication cannot use more than eight.",
+                nameof(settings));
         }
 
         if (settings.MaxSessions != 1)

@@ -74,5 +74,5 @@ A second Windows machine was not available for this run, so remote-IP operation 
 
 - The application rejects public bind addresses and requires VNC authentication. The WPF application defaults to loopback and asks for confirmation before a private non-loopback bind. It does not configure the firewall.
 - Only one server session is permitted because Windows input state is shared.
-- Classic VNC Authentication does not encrypt the session and has an effective eight-character password limit. Use a trusted VPN/tunnel for non-loopback connections.
+- LucyVNC Server accepts 6–8 printable ASCII characters for classic VNC Authentication; the protocol's DES key uses at most eight. Inputs longer than eight are rejected, not truncated. Classic authentication does not encrypt the session. Use a trusted VPN/tunnel for non-loopback connections. TLS/VeNCrypt and modern all-characters password authentication remain unimplemented.
 - Tight encoding, VeNCrypt/TLS, clipboard, indexed color, and vendor-specific modes are not implemented. The Server advertises Raw only.

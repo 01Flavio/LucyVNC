@@ -696,9 +696,26 @@ public enum MouseButton : byte
 
 public static class VncAuthentication
 {
+    public const int MaximumClassicPasswordLength = 8;
+    public const int MinimumServerPasswordLength = 6;
+
+    public static bool IsValidClassicPassword(string? password) =>
+        !string.IsNullOrEmpty(password) &&
+        password.Length <= MaximumClassicPasswordLength &&
+        password.All(character => character is >= (char)0x20 and <= (char)0x7e);
+
+    public static bool IsValidServerPassword(string? password) =>
+        IsValidClassicPassword(password) && password!.Length >= MinimumServerPasswordLength;
+
     public static byte[] ComputeResponse(string password, ReadOnlySpan<byte> challenge)
     {
         ArgumentNullException.ThrowIfNull(password);
+        if (!IsValidClassicPassword(password))
+        {
+            throw new ArgumentException(
+                "Classic VNC Authentication accepts printable ASCII passwords of at most eight characters.",
+                nameof(password));
+        }
         if (challenge.Length != 16)
         {
             throw new ArgumentException("Challenge must be exactly 16 bytes.", nameof(challenge));
@@ -715,7 +732,7 @@ public static class VncAuthentication
 
     public static bool VerifyResponse(string password, ReadOnlySpan<byte> challenge, ReadOnlySpan<byte> response)
     {
-        if (response.Length != 16)
+        if (!IsValidClassicPassword(password) || response.Length != 16)
         {
             return false;
         }

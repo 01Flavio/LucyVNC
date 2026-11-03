@@ -2,12 +2,13 @@ using System.Windows;
 using System.Windows.Controls;
 using System.Windows.Input;
 using System.Windows.Media;
+using Vnc.Protocol;
 
 namespace Vnc.App;
 
 internal sealed class CredentialPromptWindow : Window
 {
-    private readonly PasswordBox _passwordBox = new() { MaxLength = 8, MinWidth = 280 };
+    private readonly PasswordBox _passwordBox = new() { MaxLength = 16, MinWidth = 280 };
     private readonly CheckBox _rememberCheckBox = new()
     {
         Content = "Lembrar no Windows Credential Manager",
@@ -34,7 +35,7 @@ internal sealed class CredentialPromptWindow : Window
         });
         content.Children.Add(new TextBlock
         {
-            Text = message ?? "Informe a senha VNC. O protocolo clássico aceita no máximo oito caracteres.",
+            Text = message ?? "Informe a senha VNC. O protocolo clássico usa no máximo oito caracteres ASCII; LucyVNC Server exige de 6 a 8.",
             Margin = new Thickness(0, 8, 0, 12),
             Foreground = (Brush)Application.Current.FindResource("TextSecondary"),
             TextWrapping = TextWrapping.Wrap,
@@ -59,9 +60,9 @@ internal sealed class CredentialPromptWindow : Window
                 return;
             }
 
-            if (_passwordBox.Password.Length > 8 || _passwordBox.Password.Any(character => character > 0x7f))
+            if (!VncAuthentication.IsValidClassicPassword(_passwordBox.Password))
             {
-                MessageBox.Show(this, "A autenticação VNC clássica aceita até oito caracteres ASCII.", "Senha inválida", MessageBoxButton.OK, MessageBoxImage.Warning);
+                MessageBox.Show(this, "A autenticação VNC clássica aceita de 1 a 8 caracteres ASCII imprimíveis. A entrada não será truncada.", "Senha inválida", MessageBoxButton.OK, MessageBoxImage.Warning);
                 _passwordBox.Focus();
                 return;
             }

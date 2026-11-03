@@ -6,7 +6,7 @@ LucyVNC implements the RFB message flow needed for an authenticated, single-scre
 
 - The Server sends the initial 12-byte version banner. The Viewer replies with the negotiated version. Versions 3.3, 3.7, and 3.8 are supported.
 - RFB 3.3 uses the four-byte security type; 3.7/3.8 use the security-type list and one-byte client selection.
-- The Server offers only Security Type 2 (VNC Authentication). The 16-byte challenge-response uses the protocol's DES key-bit reversal and the first eight ASCII password characters. The application requires exactly eight ASCII characters to avoid ambiguity.
+- The Server offers only Security Type 2 (VNC Authentication). The 16-byte challenge-response uses the protocol's DES key-bit reversal and an eight-byte password key. LucyVNC Server requires 6–8 printable ASCII characters; the Viewer accepts 1–8 printable ASCII characters to remain compatible with legacy peers. Inputs longer than eight characters are rejected by the authentication implementation, never silently truncated.
 - Authentication status and the RFB 3.8 failure reason are serialized as big-endian values. There is no unauthenticated Server mode. The Viewer permits Security Type None only when explicitly configured to do so.
 - After successful authentication, the client/server initialization messages carry dimensions, the 16-byte PixelFormat, and a UTF-8 desktop name. Framebuffer dimensions and payloads are bounded before allocation.
 
@@ -27,6 +27,6 @@ SetPixelFormat, SetEncodings, FramebufferUpdateRequest, KeyEvent, PointerEvent, 
 
 ## Security and known limitations
 
-Classic VNC Authentication proves knowledge of a short password but does not encrypt RFB traffic. Use loopback or a trusted VPN/SSH tunnel. The Server accepts only loopback, RFC1918, CGNAT, IPv6 unique-local, or link-local bind addresses; the WPF app additionally asks for confirmation before a non-loopback bind. It does not change firewall policy.
+Classic VNC Authentication proves knowledge of a short password but does not encrypt RFB traffic. It uses DES challenge-response and is not suitable for exposure to untrusted networks. Use loopback or a trusted VPN/SSH tunnel. The Server accepts only loopback, RFC1918, CGNAT, IPv6 unique-local, or link-local bind addresses; `0.0.0.0` requires explicit user confirmation and binds all local IPv4 interfaces. It does not change firewall policy. TLS/VeNCrypt and a modern password mechanism that uses every character are not implemented; do not enter a password longer than eight characters or assume the session is encrypted.
 
 TLS/VeNCrypt, Tight encoding, clipboard transfer, indexed color, multi-monitor capture, server-side CopyRect generation, and durable Windows service management are outside the current implementation.

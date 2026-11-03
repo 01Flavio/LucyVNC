@@ -4,6 +4,7 @@ using System.Net.NetworkInformation;
 using System.Security.Principal;
 using Microsoft.Win32;
 using Vnc.Service;
+using Vnc.Protocol;
 
 namespace Vnc.Tray;
 
@@ -21,7 +22,7 @@ internal sealed class LucyVncServerConfigurationForm : Form
     };
     private readonly NumericUpDown _port = new() { Minimum = 1, Maximum = 65535, Value = 5900 };
     private readonly TextBox _windowsUser = new();
-    private readonly TextBox _password = new() { UseSystemPasswordChar = true, MaxLength = 8 };
+    private readonly TextBox _password = new() { UseSystemPasswordChar = true, MaxLength = 16 };
     private readonly CheckBox _serviceAutomatic = new() { Text = "Iniciar o serviço automaticamente com o Windows" };
     private readonly CheckBox _agentAtLogon = new() { Text = "Iniciar LucyVNC Server e Agent no logon (somente conta atual)" };
     private readonly TextBox _diagnostics = new()
@@ -165,7 +166,7 @@ internal sealed class LucyVncServerConfigurationForm : Form
         AddSetting(settings, "Confirmação multirrede", _allInterfacesConfirmation);
         AddSetting(settings, "Porta TCP", _port);
         AddSetting(settings, "Usuário Windows do Agent", _windowsUser);
-        AddSetting(settings, "Nova senha VNC (8 caracteres ASCII)", _password);
+        AddSetting(settings, "Nova senha clássica VNC (6 a 8 ASCII; sem TLS)", _password);
         AddSetting(settings, "Inicialização do serviço", _serviceAutomatic);
         AddSetting(settings, "Inicialização do Agent no logon", _agentAtLogon);
         AddSetting(settings, "Diagnóstico", _diagnostics);
@@ -278,9 +279,10 @@ internal sealed class LucyVncServerConfigurationForm : Form
                 throw new InvalidDataException("Selecione loopback, uma interface IPv4 privada/VPN ou todas as interfaces com confirmação explícita.");
             }
 
-            if (password.Length != 8 || password.Any(character => character > 0x7f))
+            if (!VncAuthentication.IsValidServerPassword(password))
             {
-                throw new InvalidDataException("A senha VNC precisa ter exatamente oito caracteres ASCII.");
+                throw new InvalidDataException(
+                    "A senha clássica VNC precisa ter de 6 a 8 caracteres ASCII imprimíveis. Caracteres além do oitavo não são aceitos.");
             }
 
             var account = new NTAccount(_windowsUser.Text.Trim());

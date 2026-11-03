@@ -34,6 +34,8 @@ public sealed class ServiceSharingControllerTests
     [InlineData("127.0.0.1", true)]
     [InlineData("::1", true)]
     [InlineData("192.168.10.5", true)]
+    [InlineData("10.20.30.40", true)]
+    [InlineData("100.96.1.2", true)]
     [InlineData("8.8.8.8", false)]
     public void BindAddressPolicyIsLoopbackFirstAndRejectsPublicAddresses(string address, bool expected)
     {

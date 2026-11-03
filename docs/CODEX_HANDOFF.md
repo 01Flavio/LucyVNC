@@ -39,11 +39,13 @@ Corrigir o fluxo do Inno Setup para permitir `0.0.0.0` no modo confirmado, mante
 - `docs/PROTOCOL.md`
 - `docs/ARCHITECTURE.md`
 - `docs/INSTALLATION.md`
+- `docs/INTEROPERABILITY.md`
 - `docs/CODEX_HANDOFF.md`
 
 ## Commits realizados
 - Base: `6902a2c9affe42482c87627e52dbceb6b7d45ff5`.
-- Commit de implementação/empacotamento ainda pendente.
+- Implementação: `885b7f4` (`fix: correct setup wildcard flow and VNC password policy`).
+- Este handoff registra a validação do commit acima; o ajuste do identificador será commitado separadamente.
 
 ## Comandos de build e testes
 - `dotnet build LucyVNC.slnx -c Release` — passou (0 warnings, 0 errors).
@@ -63,9 +65,9 @@ Corrigir o fluxo do Inno Setup para permitir `0.0.0.0` no modo confirmado, mante
 - A primeira compilação Inno do novo fluxo não foi executada até o final antes do ajuste final de versão; a compilação 2.4.2 final foi bem-sucedida.
 
 ## Pendências ordenadas
-1. Criar commit local das alterações validadas; confirmar worktree limpo.
+1. Commitar este registro atualizado e confirmar worktree limpo.
 2. TLS/VeNCrypt e autenticação moderna sem truncamento estão pendentes; não usar >8 caracteres nem alegar que o tráfego VNC clássico é cifrado.
 3. Validação visual/instalação do assistente permanece manual, sem instalar serviço real ou alterar firewall.
 
 ## Próxima ação exata
-Executar `git add`/`git commit` local para as alterações validadas, depois atualizar este handoff com o hash do commit e verificar `git status --short --branch`.
+Executar `git add docs/CODEX_HANDOFF.md` e criar commit local de documentação; depois verificar `git status --short --branch`.

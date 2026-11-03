@@ -11,8 +11,20 @@ public interface IScreenCapture : IDisposable
     ScreenFrame CapturePrimaryScreen(int width = 0, int height = 0);
 }
 
-public sealed class GdiScreenCapture : IScreenCapture
+public interface IScreenCaptureBounds
 {
+    (int Width, int Height) GetPrimaryScreenSize();
+}
+
+public sealed class GdiScreenCapture : IScreenCapture, IScreenCaptureBounds
+{
+    public (int Width, int Height) GetPrimaryScreenSize()
+    {
+        var bounds = System.Windows.Forms.Screen.PrimaryScreen?.Bounds
+            ?? throw new InvalidOperationException("Windows did not report a primary display.");
+        return (bounds.Width, bounds.Height);
+    }
+
     public ScreenFrame CapturePrimaryScreen(int width = 0, int height = 0)
     {
         var bounds = System.Windows.Forms.Screen.PrimaryScreen?.Bounds

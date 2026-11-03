@@ -1,4 +1,6 @@
+using System.ComponentModel;
 using System.Net.Sockets;
+using System.Security.Principal;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Logging;
@@ -9,21 +11,46 @@ namespace Vnc.Service;
 internal static class Program
 {
     public static Task Main(string[] args) =>
-        ServiceHostBuilder.Create(args)
-            .Build()
-            .RunAsync();
+        args.Contains(ServiceHostBuilder.ConsoleModeArgument, StringComparer.OrdinalIgnoreCase)
+            ? RunConsoleAsync(args)
+            : ServiceHostBuilder.Create(args).Build().RunAsync();
+
+    private static async Task RunConsoleAsync(string[] args)
+    {
+        using var host = ServiceHostBuilder.Create(args).Build();
+        await host.StartAsync().ConfigureAwait(false);
+        Console.WriteLine("READY:WORKER");
+        while (await Console.In.ReadLineAsync().ConfigureAwait(false) is { } line &&
+               !string.Equals(line, "STOP", StringComparison.Ordinal))
+        {
+        }
+
+        await host.StopAsync().ConfigureAwait(false);
+    }
 }
 
 public static class ServiceHostBuilder
 {
-    public static IHostBuilder Create(string[] args) =>
-        Host.CreateDefaultBuilder(args)
-            .UseWindowsService(options => options.ServiceName = WindowsServiceStatusProbe.ServiceName)
-            .ConfigureServices(services =>
+    internal const string ConfigurationPathEnvironmentVariable = "LUCYVNC_SERVICE_CONFIG";
+    internal const string AgentSidEnvironmentVariable = "LUCYVNC_AGENT_SID";
+    internal const string PipeNameEnvironmentVariable = "LUCYVNC_AGENT_PIPE";
+    internal const string ConsoleModeArgument = "--console";
+
+    public static IHostBuilder Create(string[] args)
+    {
+        var builder = Host.CreateDefaultBuilder(args);
+        if (!args.Contains(ConsoleModeArgument, StringComparer.OrdinalIgnoreCase))
+        {
+            builder.UseWindowsService(options => options.ServiceName = WindowsServiceStatusProbe.ServiceName);
+        }
+
+        return builder.ConfigureServices(services =>
             {
-                services.AddSingleton(serviceProvider => new ServiceConfigurationStore());
+                services.AddSingleton(_ => new ServiceConfigurationStore(
+                    Environment.GetEnvironmentVariable(ConfigurationPathEnvironmentVariable)));
                 services.AddHostedService<ServiceWorker>();
             });
+    }
 }
 
 internal sealed class ServiceWorker : BackgroundService
@@ -42,79 +69,125 @@ internal sealed class ServiceWorker : BackgroundService
 
     protected override async Task ExecuteAsync(CancellationToken stoppingToken)
     {
-        VncServerLifecycle? lifecycle = null;
+        ServiceConfiguration configuration;
         try
         {
-            var configuration = _configurationStore.LoadOrCreate();
+            configuration = _configurationStore.LoadOrCreate();
             var diagnostic = ServiceSharingController.Evaluate(configuration);
             _logger.LogInformation(
                 "LucyVNC service state: {State}. {Diagnostic}",
                 diagnostic.State,
                 diagnostic.Message);
-
-            if (diagnostic.State == ServiceSharingState.Disabled)
-            {
-                return;
-            }
-
-            var password = ResolveVncPassword();
-            if (password is null)
-            {
-                _logger.LogWarning(
-                    "LucyVNC remote sharing is enabled but the {EnvironmentVariable} variable is missing or is not an eight-character ASCII VNC password. The RFB listener was not opened.",
-                    VncPasswordEnvironmentVariable);
-                return;
-            }
-
-            var agentClient = new LucyAgentClient(
-                pipeName: "LucyVNCAgent",
-                agentSid: Environment.GetEnvironmentVariable("LUCYVNC_AGENT_SID") ?? string.Empty);
-            var agentConnected = await agentClient.ConnectAsync(CancellationToken.None).ConfigureAwait(false);
-            if (!agentConnected)
-            {
-                _logger.LogWarning(
-                    "The LucyServer worker could not reach the LucySessionAgent. The RFB listener was not opened.");
-                return;
-            }
-
-            lifecycle = new VncServerLifecycle(
-                CreateConnectionSettings(configuration, password),
-                new AgentScreenCapture(agentClient),
-                new AgentRemoteInput(agentClient));
-            lifecycle.StatusChanged += (_, message) => _logger.LogInformation("LucyVNC RFB listener status: {Message}", message);
-            await lifecycle.StartAsync(CancellationToken.None).ConfigureAwait(false);
-            _lifecycle = lifecycle;
-            _logger.LogInformation(
-                "LucyVNC RFB listener started on {BindAddress}:{Port}.",
-                configuration.BindAddress,
-                lifecycle.BoundPort);
         }
         catch (Exception exception) when (exception is IOException
                                          or UnauthorizedAccessException
                                          or System.Security.SecurityException
                                          or System.Text.Json.JsonException
-                                         or InvalidOperationException
-                                         or ArgumentException
-                                         or ObjectDisposedException
-                                         or SocketException)
+                                         or InvalidOperationException)
         {
             _logger.LogError(
-                "LucyVNC service could not start the authenticated RFB listener: {Reason}",
+                "LucyVNC service could not load a safe configuration: {Reason}",
                 exception.Message);
+            return;
         }
 
-        try
+        if (ServiceSharingController.Evaluate(configuration).State == ServiceSharingState.Disabled)
         {
             await Task.Delay(Timeout.InfiniteTimeSpan, stoppingToken).ConfigureAwait(false);
+            return;
         }
-        finally
+
+        var password = ResolveVncPassword();
+        if (password is null)
         {
-            var runningLifecycle = _lifecycle;
-            _lifecycle = null;
-            if (runningLifecycle is not null)
+            _logger.LogWarning(
+                "LucyVNC remote sharing is enabled but {EnvironmentVariable} is missing or is not a valid eight-character ASCII VNC password. No listener was opened.",
+                VncPasswordEnvironmentVariable);
+            return;
+        }
+
+        while (!stoppingToken.IsCancellationRequested)
+        {
+            LucyAgentClient? agentClient = null;
+            VncServerLifecycle? lifecycle = null;
+            try
             {
-                await runningLifecycle.StopAsync(CancellationToken.None).ConfigureAwait(false);
-                runningLifecycle.Dispose();
+                var agentSid = Environment.GetEnvironmentVariable(ServiceHostBuilder.AgentSidEnvironmentVariable);
+                if (string.IsNullOrWhiteSpace(agentSid))
+                {
+                    throw new InvalidOperationException(
+                        $"{ServiceHostBuilder.AgentSidEnvironmentVariable} must identify the expected interactive-agent Windows SID.");
+                }
+
+                _ = new SecurityIdentifier(agentSid);
+                agentClient = new LucyAgentClient(
+                    Environment.GetEnvironmentVariable(ServiceHostBuilder.PipeNameEnvironmentVariable) ?? "LucyVNCAgent",
+                    agentSid);
+                await agentClient.ConnectAsync(stoppingToken).ConfigureAwait(false);
+
+                lifecycle = new VncServerLifecycle(
+                    CreateConnectionSettings(configuration, password),
+                    new AgentScreenCapture(agentClient),
+                    new AgentRemoteInput(agentClient));
+                lifecycle.StatusChanged += (_, message) => _logger.LogInformation("LucyVNC RFB listener status: {Message}", message);
+                await lifecycle.StartAsync(stoppingToken).ConfigureAwait(false);
+                _lifecycle = lifecycle;
+                _logger.LogInformation(
+                    "LucyVNC authenticated RFB listener is ready on {BindAddress}:{Port}; desktop capture and input are provided by the verified interactive agent.",
+                    configuration.BindAddress,
+                    lifecycle.BoundPort);
+
+                while (!stoppingToken.IsCancellationRequested)
+                {
+                    await Task.Delay(TimeSpan.FromSeconds(5), stoppingToken).ConfigureAwait(false);
+                    await agentClient.SendHeartbeatAsync(stoppingToken).ConfigureAwait(false);
+                }
+            }
+            catch (OperationCanceledException) when (stoppingToken.IsCancellationRequested)
+            {
+                break;
+            }
+            catch (OperationCanceledException exception)
+            {
+                _logger.LogWarning(
+                    "LucyVNC sharing stopped after an IPC operation timed out: {Reason}. The listener will remain closed until the agent reconnects.",
+                    exception.Message);
+            }
+            catch (Exception exception) when (exception is IOException
+                                             or UnauthorizedAccessException
+                                             or System.Security.SecurityException
+                                             or System.Text.Json.JsonException
+                                             or InvalidOperationException
+                                             or ArgumentException
+                                             or ObjectDisposedException
+                                             or SocketException
+                                             or Win32Exception)
+            {
+                _logger.LogWarning(
+                    "LucyVNC sharing stopped because the authenticated interactive agent is unavailable: {Reason}. The listener will remain closed until the agent reconnects.",
+                    exception.Message);
+            }
+            finally
+            {
+                _lifecycle = null;
+                if (lifecycle is not null)
+                {
+                    try
+                    {
+                        await lifecycle.StopAsync(CancellationToken.None).ConfigureAwait(false);
+                    }
+                    finally
+                    {
+                        lifecycle.Dispose();
+                    }
+                }
+
+                agentClient?.Dispose();
+            }
+
+            if (!stoppingToken.IsCancellationRequested)
+            {
+                await Task.Delay(TimeSpan.FromSeconds(3), stoppingToken).ConfigureAwait(false);
             }
         }
     }
@@ -138,6 +211,8 @@ internal sealed class ServiceWorker : BackgroundService
             Port = configuration.Port,
             Password = password,
             MaxSessions = 1,
+            MaxFramesPerSecond = 10,
+            FramebufferLimitBytes = 16 * 1024 * 1024,
             Width = 0,
             Height = 0,
         };

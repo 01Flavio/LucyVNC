@@ -362,11 +362,11 @@
                             <TextBlock Text="LucyServer Windows Service" FontSize="18" FontWeight="SemiBold" Foreground="{StaticResource Accent}" />
                             <TextBlock x:Name="ServiceStatus" Text="Consultando o Service Control Manager..."
                                        Margin="0,10,0,0" TextWrapping="Wrap" />
-                            <TextBlock Text="Este host de serviço não abre um listener: o serviço recusa compartilhamento até existir um agente interativo real com IPC autenticado e restrito. A sessão 0 nunca captura a tela nem injeta entrada; logon, desktop seguro e sessões não interativas não são suportados."
+                            <TextBlock Text="O listener só fica ativo quando o compartilhamento está explicitamente habilitado, há senha válida e o agente interativo autenticado está conectado. A sessão 0 nunca captura a tela nem injeta entrada; logon, desktop seguro e sessões não interativas não são suportados."
                                        Foreground="{StaticResource Warning}" Margin="0,18,0,0" TextWrapping="Wrap" />
-                            <TextBlock Text="Compartilhamento remoto permanece desabilitado por padrão. A configuração persistente não contém senha; autenticação é obrigatória, o limite futuro é uma sessão e não há alterações de firewall."
+                            <TextBlock Text="Compartilhamento remoto permanece desabilitado por padrão. A configuração persistente não contém senha; autenticação é obrigatória, o limite é uma sessão e não há alterações de firewall."
                                        Foreground="{StaticResource TextSecondary}" Margin="0,18,0,0" TextWrapping="Wrap" />
-                            <TextBlock Text="O serviço não fornece controles de instalação/inicialização nesta tela. O compartilhamento em primeiro plano à esquerda continua independente."
+                            <TextBlock Text="A configuração de desenvolvimento pode usar 127.0.0.1:5901. O serviço não fornece controles de instalação/inicialização nesta tela; o compartilhamento em primeiro plano à esquerda continua independente."
                                        Foreground="{StaticResource TextSecondary}" Margin="0,18,0,0" TextWrapping="Wrap" />
                         </StackPanel>
                     </Border>

@@ -11,7 +11,7 @@ internal static class Program
     private static async Task Main()
     {
         var configuredSid = Environment.GetEnvironmentVariable(AuthorizedSidEnvironmentVariable);
-        var agent = new LucySessionAgent(
+        using var agent = new LucySessionAgent(
             new GdiScreenCapture(),
             new SendInputController(),
             string.IsNullOrWhiteSpace(configuredSid) ? GetInteractiveUserSid() : configuredSid);
@@ -32,6 +32,8 @@ internal static class Program
         {
             // Shut the agent down gracefully when a cancellation is requested.
         }
+
+        await agent.StopAsync();
     }
 
     private static string GetInteractiveUserSid()

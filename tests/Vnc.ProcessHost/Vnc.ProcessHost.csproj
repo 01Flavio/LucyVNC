@@ -6,6 +6,7 @@
     <Nullable>enable</Nullable>
   </PropertyGroup>
   <ItemGroup>
+    <ProjectReference Include="..\..\src\Vnc.Agent\Vnc.Agent.csproj" />
     <ProjectReference Include="..\..\src\Vnc.Server\Vnc.Server.csproj" />
   </ItemGroup>
 </Project>

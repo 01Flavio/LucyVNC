@@ -1,5 +1,7 @@
 using System.IO.Pipes;
 using System.Buffers.Binary;
+using System.Security.AccessControl;
+using System.Security.Principal;
 using System.Text;
 using System.Text.Json;
 using Vnc.Core;
@@ -28,16 +30,20 @@ public sealed class LucySessionAgent : IDisposable
 {
     public const int MaxMessageBytes = 16 * 1024 * 1024;
     public const string DefaultPipeName = "LucyVNCAgent";
+    private const int MaxFramebufferWidth = 1920;
+    private const long MaxFramebufferPixels = 1920L * 1080;
 
     private readonly string _pipeName;
     private readonly IScreenCapture _screenCapture;
     private readonly IRemoteInput _remoteInput;
-    private readonly string _authorizedSid;
+    private readonly string _authorizedWorkerSid;
     private readonly TimeSpan _heartbeatTimeout;
     private readonly object _sync = new();
     private CancellationTokenSource? _cancellation;
     private volatile CancellationTokenSource? _sessionCancellation;
     private NamedPipeServerStream? _server;
+    private Task? _acceptTask;
+    private Task? _watchdogTask;
     private bool _running;
     private bool _disposed;
     private bool _sessionFailed;
@@ -46,13 +52,15 @@ public sealed class LucySessionAgent : IDisposable
     public LucySessionAgent(
         IScreenCapture screenCapture,
         IRemoteInput remoteInput,
-        string authorizedSid,
+        string authorizedWorkerSid,
         string pipeName = DefaultPipeName,
         TimeSpan? heartbeatTimeout = null)
     {
-        _screenCapture = screenCapture;
-        _remoteInput = remoteInput;
-        _authorizedSid = authorizedSid;
+        _screenCapture = screenCapture ?? throw new ArgumentNullException(nameof(screenCapture));
+        _remoteInput = remoteInput ?? throw new ArgumentNullException(nameof(remoteInput));
+        _ = new SecurityIdentifier(authorizedWorkerSid);
+        ArgumentException.ThrowIfNullOrWhiteSpace(pipeName);
+        _authorizedWorkerSid = authorizedWorkerSid;
         _pipeName = pipeName;
         _heartbeatTimeout = heartbeatTimeout ?? TimeSpan.FromSeconds(30);
     }
@@ -71,16 +79,17 @@ public sealed class LucySessionAgent : IDisposable
             throw new InvalidOperationException("The LucySessionAgent is already running.");
         }
 
-        var cts = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken, CancellationToken.None);
+        var cts = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
         _cancellation = cts;
-        var server = new NamedPipeServerStream(
+        var server = NamedPipeServerStreamAcl.Create(
             _pipeName,
             PipeDirection.InOut,
             1,
             PipeTransmissionMode.Byte,
-            PipeOptions.None,
+            PipeOptions.Asynchronous | PipeOptions.FirstPipeInstance,
             4096,
-            4096);
+            4096,
+            CreatePipeSecurity());
         _server = server;
         _running = true;
         _sessionFailed = false;
@@ -88,12 +97,12 @@ public sealed class LucySessionAgent : IDisposable
         StatusChanged?.Invoke(this, $"Agent IPC listener started on pipe {PipeName}.");
 
         var listening = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
-        _ = Task.Run(() => HeartbeatWatchdogAsync(cts.Token));
-        _ = AcceptLoopAsync(server, cts.Token, listening);
+        _watchdogTask = Task.Run(() => HeartbeatWatchdogAsync(cts.Token));
+        _acceptTask = AcceptLoopAsync(server, cts.Token, listening);
         return listening.Task;
     }
 
-    public Task StopAsync(CancellationToken cancellationToken = default)
+    public async Task StopAsync(CancellationToken cancellationToken = default)
     {
         CancellationTokenSource? cts;
         lock (_sync)
@@ -120,13 +129,32 @@ public sealed class LucySessionAgent : IDisposable
         catch (ObjectDisposedException)
         {
         }
+
+        var acceptTask = _acceptTask;
+        var watchdogTask = _watchdogTask;
+        _acceptTask = null;
+        _watchdogTask = null;
+        if (acceptTask is not null)
+        {
+            await acceptTask.ConfigureAwait(false);
+        }
+
+        if (watchdogTask is not null)
+        {
+            await watchdogTask.ConfigureAwait(false);
+        }
+
+        try
+        {
+            _remoteInput.ReleaseAll();
+        }
         finally
         {
             cts?.Dispose();
             StatusChanged?.Invoke(this, "Agent IPC listener stopped.");
         }
 
-        return Task.CompletedTask;
+        cancellationToken.ThrowIfCancellationRequested();
     }
 
     public void Dispose()
@@ -138,6 +166,8 @@ public sealed class LucySessionAgent : IDisposable
 
         _disposed = true;
         StopAsync(CancellationToken.None).GetAwaiter().GetResult();
+        _remoteInput.Dispose();
+        _screenCapture.Dispose();
     }
 
     private async Task AcceptLoopAsync(NamedPipeServerStream server, CancellationToken cancellationToken, TaskCompletionSource listening)
@@ -160,6 +190,7 @@ public sealed class LucySessionAgent : IDisposable
             }
 
             using var sessionCts = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
+            sessionCts.CancelAfter(TimeSpan.FromSeconds(5));
             _sessionCancellation = sessionCts;
             try
             {
@@ -175,8 +206,30 @@ public sealed class LucySessionAgent : IDisposable
             }
             finally
             {
+                try
+                {
+                    _remoteInput.ReleaseAll();
+                }
+                catch (Exception ex)
+                {
+                    StatusChanged?.Invoke(this, $"Could not release interactive input after IPC disconnect: {ex.Message}");
+                }
+
                 _sessionCancellation = null;
                 sessionCts.Dispose();
+                if (server.IsConnected)
+                {
+                    try
+                    {
+                        server.Disconnect();
+                    }
+                    catch (IOException)
+                    {
+                    }
+                    catch (ObjectDisposedException)
+                    {
+                    }
+                }
             }
         }
     }
@@ -186,6 +239,7 @@ public sealed class LucySessionAgent : IDisposable
         _sessionFailed = false;
         _lastHeartbeatUtc = DateTime.UtcNow;
         StatusChanged?.Invoke(this, "Agent IPC client connected.");
+        var authenticated = false;
 
         while (!cancellationToken.IsCancellationRequested && !_sessionFailed)
         {
@@ -203,10 +257,23 @@ public sealed class LucySessionAgent : IDisposable
                 break;
             }
 
+            if (!authenticated && type != "Hello")
+            {
+                await WriteMessageAsync(stream, new { Type = "Error", Payload = new { Message = "IPC peer must authenticate before requesting desktop access." } }, cancellationToken).ConfigureAwait(false);
+                _sessionFailed = true;
+                break;
+            }
+
             switch (type)
             {
                 case "Hello":
-                    await HandleHelloAsync(stream, payload, cancellationToken).ConfigureAwait(false);
+                    if (authenticated)
+                    {
+                        _sessionFailed = true;
+                        break;
+                    }
+
+                    authenticated = await HandleHelloAsync((NamedPipeServerStream)stream, cancellationToken).ConfigureAwait(false);
                     break;
                 case "FrameRequest":
                     await HandleFrameRequestAsync(stream, payload, cancellationToken).ConfigureAwait(false);
@@ -218,6 +285,10 @@ public sealed class LucySessionAgent : IDisposable
                     _lastHeartbeatUtc = DateTime.UtcNow;
                     await WriteMessageAsync(stream, new { Type = "HeartbeatAck", Payload = new { Status = "Ready" } }, cancellationToken).ConfigureAwait(false);
                     break;
+                case "ReleaseAll":
+                    _remoteInput.ReleaseAll();
+                    await WriteMessageAsync(stream, new { Type = "ReleaseAllAck", Payload = new { Accepted = true } }, cancellationToken).ConfigureAwait(false);
+                    break;
                 default:
                     await WriteMessageAsync(stream, new { Type = "Error", Payload = new { Message = $"Unsupported IPC message {type}." } }, cancellationToken).ConfigureAwait(false);
                     break;
@@ -225,45 +296,75 @@ public sealed class LucySessionAgent : IDisposable
         }
     }
 
-    private async Task HandleHelloAsync(Stream stream, JsonElement payload, CancellationToken cancellationToken)
+    private async Task<bool> HandleHelloAsync(NamedPipeServerStream stream, CancellationToken cancellationToken)
     {
-        var sid = payload.GetProperty("Sid").GetString();
-        if (!IsAuthorized(sid))
+        var clientSid = ResolveConnectedClientSid(stream);
+        if (!IsAuthorizedWorker(clientSid))
         {
-            await WriteMessageAsync(stream, new { Type = "Error", Payload = new { Message = "Agent rejected the IPC peer identity." } }, cancellationToken).ConfigureAwait(false);
+            await WriteMessageAsync(stream, new { Type = "HelloAck", Payload = new { Accepted = false } }, cancellationToken).ConfigureAwait(false);
             _sessionFailed = true;
-            throw new IOException("Unauthorized IPC peer.");
+            return false;
         }
 
-        await WriteMessageAsync(stream, new { Type = "HelloAck", Payload = new { Sid = sid, Accepted = true } }, cancellationToken).ConfigureAwait(false);
+        await WriteMessageAsync(stream, new { Type = "HelloAck", Payload = new { Accepted = true, ProtocolVersion = 1 } }, cancellationToken).ConfigureAwait(false);
         StatusChanged?.Invoke(this, "Agent accepted the IPC peer.");
+        _lastHeartbeatUtc = DateTime.UtcNow;
+        _sessionCancellation?.CancelAfter(Timeout.InfiniteTimeSpan);
+        return true;
     }
 
     private async Task HandleFrameRequestAsync(Stream stream, JsonElement payload, CancellationToken cancellationToken)
     {
-        try
-        {
-            var frame = _screenCapture.CapturePrimaryScreen(
-                payload.TryGetProperty("Width", out var widthProperty) && widthProperty.ValueKind is JsonValueKind.Number ? widthProperty.GetInt32() : 0,
-                payload.TryGetProperty("Height", out var heightProperty) && heightProperty.ValueKind is JsonValueKind.Number ? heightProperty.GetInt32() : 0);
-            await WriteMessageAsync(
-                stream,
-                new
+        var width = OptionalDimension(payload, "Width");
+        var height = OptionalDimension(payload, "Height");
+        var frame = CaptureBoundedFrame(width, height);
+        await WriteMessageAsync(
+            stream,
+            new
+            {
+                Type = "FrameResponse",
+                Payload = new
                 {
-                    Type = "FrameResponse",
-                    Payload = new
-                    {
-                        Width = frame.Width,
-                        Height = frame.Height,
-                        Data = Convert.ToBase64String(frame.PixelData),
-                    },
+                    Width = frame.Width,
+                    Height = frame.Height,
+                    Data = Convert.ToBase64String(frame.PixelData),
                 },
-                cancellationToken).ConfigureAwait(false);
-        }
-        catch (Exception ex)
+            },
+            cancellationToken).ConfigureAwait(false);
+    }
+
+    private ScreenFrame CaptureBoundedFrame(int requestedWidth, int requestedHeight)
+    {
+        if ((requestedWidth == 0) != (requestedHeight == 0))
         {
-            await WriteMessageAsync(stream, new { Type = "Error", Payload = new { Message = $"Frame capture failed: {ex.Message}" } }, cancellationToken).ConfigureAwait(false);
+            throw new InvalidDataException("Framebuffer width and height must both be zero or both be positive.");
         }
+
+        var width = requestedWidth;
+        var height = requestedHeight;
+        if (width == 0 && _screenCapture is IScreenCaptureBounds boundsProvider)
+        {
+            (width, height) = boundsProvider.GetPrimaryScreenSize();
+        }
+
+        if (width > 0 && height > 0)
+        {
+            var scale = Math.Min(1d, Math.Min(
+                (double)MaxFramebufferWidth / width,
+                Math.Sqrt((double)MaxFramebufferPixels / ((long)width * height))));
+            width = Math.Max(1, (int)Math.Floor(width * scale));
+            height = Math.Max(1, (int)Math.Floor(height * scale));
+        }
+
+        var frame = _screenCapture.CapturePrimaryScreen(width, height);
+        if ((long)frame.Width * frame.Height > MaxFramebufferPixels ||
+            frame.PixelData.Length > MaxMessageBytes * 3 / 4)
+        {
+            throw new InvalidDataException("The captured framebuffer exceeds the bounded IPC frame size.");
+        }
+
+        _remoteInput.SetFramebufferSize(checked((ushort)frame.Width), checked((ushort)frame.Height));
+        return frame;
     }
 
     private Task HandleInputEventAsync(Stream stream, JsonElement payload, CancellationToken cancellationToken)
@@ -271,49 +372,125 @@ public sealed class LucySessionAgent : IDisposable
         var action = payload.GetProperty("Action").GetString();
         if (action == "Key")
         {
-            var keySym = (uint)payload.GetProperty("KeySym").GetInt32();
+            if (!payload.GetProperty("KeySym").TryGetUInt32(out var keySym))
+            {
+                throw new InvalidDataException("Input key symbol must be an unsigned integer.");
+            }
+
             var pressed = payload.GetProperty("Pressed").GetBoolean();
             _remoteInput.ApplyKeyEvent(keySym, pressed);
         }
+        else if (action == "Pointer")
+        {
+            var x = OptionalCoordinate(payload, "X");
+            var y = OptionalCoordinate(payload, "Y");
+            var buttons = OptionalButtonMask(payload, "Buttons");
+            _remoteInput.ApplyPointerEvent(x, y, buttons);
+        }
         else
         {
-            var x = (ushort)payload.GetProperty("X").GetInt32();
-            var y = (ushort)payload.GetProperty("Y").GetInt32();
-            var buttons = (byte)payload.GetProperty("Buttons").GetInt32();
-            _remoteInput.ApplyPointerEvent(x, y, buttons);
+            throw new InvalidDataException("Unsupported remote input action.");
         }
 
         return WriteMessageAsync(stream, new { Type = "InputAck", Payload = new { Accepted = true } }, cancellationToken);
     }
 
-    private bool IsAuthorized(string? sid)
+    private bool IsAuthorizedWorker(string? sid)
     {
-        if (string.IsNullOrWhiteSpace(sid))
+        if (sid is null)
         {
             return false;
         }
 
-        return string.Equals(sid, _authorizedSid, StringComparison.OrdinalIgnoreCase);
+        return string.Equals(sid, _authorizedWorkerSid, StringComparison.OrdinalIgnoreCase);
+    }
+
+    private static string? ResolveConnectedClientSid(NamedPipeServerStream server)
+    {
+        string? sid = null;
+        server.RunAsClient(() =>
+        {
+            using var identity = WindowsIdentity.GetCurrent();
+            sid = identity.User?.Value;
+        });
+
+        return sid;
+    }
+
+    private PipeSecurity CreatePipeSecurity()
+    {
+        var security = new PipeSecurity();
+        security.SetAccessRuleProtection(isProtected: true, preserveInheritance: false);
+        security.AddAccessRule(new PipeAccessRule(
+            new SecurityIdentifier(_authorizedWorkerSid),
+            PipeAccessRights.ReadWrite,
+            AccessControlType.Allow));
+        return security;
+    }
+
+    private static int OptionalDimension(JsonElement payload, string name)
+    {
+        if (!payload.TryGetProperty(name, out var property))
+        {
+            return 0;
+        }
+
+        if (!property.TryGetInt32(out var value) || value is < 0 or > ushort.MaxValue)
+        {
+            throw new InvalidDataException($"Framebuffer {name} is outside the RFB range.");
+        }
+
+        return value;
+    }
+
+    private static ushort OptionalCoordinate(JsonElement payload, string name)
+    {
+        if (!payload.TryGetProperty(name, out var property) ||
+            !property.TryGetUInt16(out var value))
+        {
+            throw new InvalidDataException($"Pointer coordinate {name} is invalid.");
+        }
+
+        return value;
+    }
+
+    private static byte OptionalButtonMask(JsonElement payload, string name)
+    {
+        if (!payload.TryGetProperty(name, out var property) ||
+            !property.TryGetByte(out var value) ||
+            (value & 0xe0) != 0)
+        {
+            throw new InvalidDataException("Pointer button mask is invalid.");
+        }
+
+        return value;
     }
 
     private async Task HeartbeatWatchdogAsync(CancellationToken cancellationToken)
     {
-        while (!cancellationToken.IsCancellationRequested)
+        try
         {
-            var sessionCancellation = _sessionCancellation;
-            if (sessionCancellation is not null && sessionCancellation.IsCancellationRequested)
+            while (!cancellationToken.IsCancellationRequested)
             {
-                return;
-            }
+                var sessionCancellation = _sessionCancellation;
+                if (sessionCancellation is not null && sessionCancellation.IsCancellationRequested)
+                {
+                    await Task.Delay(TimeSpan.FromSeconds(1), cancellationToken).ConfigureAwait(false);
+                    continue;
+                }
 
-            if (DateTime.UtcNow - _lastHeartbeatUtc > _heartbeatTimeout)
-            {
-                StatusChanged?.Invoke(this, "LucyAgent IPC heartbeat timeout detected.");
-                _sessionCancellation?.Cancel();
-                return;
-            }
+                if (sessionCancellation is not null &&
+                    DateTime.UtcNow - _lastHeartbeatUtc > _heartbeatTimeout)
+                {
+                    StatusChanged?.Invoke(this, "LucyAgent IPC heartbeat timeout detected.");
+                    sessionCancellation.Cancel();
+                }
 
-            await Task.Delay(TimeSpan.FromSeconds(5), cancellationToken).ConfigureAwait(false);
+                await Task.Delay(TimeSpan.FromSeconds(1), cancellationToken).ConfigureAwait(false);
+            }
+        }
+        catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+        {
         }
     }
 
@@ -321,6 +498,11 @@ public sealed class LucySessionAgent : IDisposable
     {
         var json = JsonSerializer.Serialize(envelope);
         var payload = Encoding.UTF8.GetBytes(json);
+        if (payload.Length is < 1 or > MaxMessageBytes)
+        {
+            throw new InvalidDataException("The LucyAgent IPC message exceeds the configured limit.");
+        }
+
         var lengthBuffer = new byte[4];
         BinaryPrimitives.WriteUInt32BigEndian(lengthBuffer, (uint)payload.Length);
         await stream.WriteAsync(lengthBuffer, cancellationToken).ConfigureAwait(false);

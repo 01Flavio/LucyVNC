@@ -1,5 +1,6 @@
 using System.Collections.Concurrent;
 using System.IO.Pipes;
+using System.Security.Principal;
 using System.Text;
 using System.Text.Json;
 using System.Buffers.Binary;
@@ -11,7 +12,7 @@ namespace Vnc.Agent.Tests;
 
 public class LucySessionAgentTests
 {
-    private const string AuthorizedSid = "S-1-5-21-1004346348-1177238915-682003330-500";
+    private static string AuthorizedSid => WindowsIdentity.GetCurrent().User?.Value ?? "S-1-5-21-1004346348-1177238915-682003330-500";
 
     [Fact]
     public async Task LucySessionAgentAcceptsAuthorizedPeerServesFrameAndForwardsInput()
@@ -64,7 +65,7 @@ public class LucySessionAgentTests
     }
 
     [Fact]
-    public async Task LucySessionAgentRejectsUnauthorizedIpcPeerIdentity()
+    public async Task LucySessionAgentDoesNotTrustSidClaimFromHello()
     {
         var capture = new FakeScreenCapture();
         var input = new FakeRemoteInput();
@@ -77,23 +78,37 @@ public class LucySessionAgentTests
         await client.ConnectAsync();
         await WriteMessageAsync(stream, new { Type = "Hello", Payload = new { Sid = "S-1-5-21-9999-9999-9999-9999-9999" } });
 
-        var rejected = false;
-        try
-        {
-            using var error = JsonDocument.Parse(await ReadMessageAsync(stream));
-            Assert.Equal("Error", error.RootElement.GetProperty("Type").GetString());
-            rejected = true;
-        }
-        catch (Exception)
-        {
-            // The agent may close the pipe after rejecting; both paths prove rejection.
-        }
-
-        Assert.True(rejected);
+        using var response = JsonDocument.Parse(await ReadMessageAsync(stream));
+        Assert.Equal("HelloAck", response.RootElement.GetProperty("Type").GetString());
+        Assert.True(response.RootElement.GetProperty("Payload").GetProperty("Accepted").GetBoolean());
         await agent.StopAsync();
     }
 
-    private static async Task WriteMessageAsync(Stream stream, object envelope)
+    [Fact]
+    public async Task LucySessionAgentPipeAclRejectsDifferentWindowsIdentity()
+    {
+        var pipeName = $"LucyVNCAgentDenied_{Guid.NewGuid():N}";
+        using var agent = new LucySessionAgent(
+            new FakeScreenCapture(),
+            new FakeRemoteInput(),
+            "S-1-5-18",
+            pipeName);
+        await agent.StartAsync();
+
+        using var client = new NamedPipeClientStream(".", pipeName, PipeDirection.InOut, PipeOptions.None);
+        await Assert.ThrowsAnyAsync<Exception>(async () =>
+        {
+            using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(3));
+            await client.ConnectAsync(timeout.Token);
+        });
+
+        await agent.StopAsync();
+    }
+
+    private static Task WriteMessageAsync(Stream stream, object envelope) =>
+        WriteMessageCoreAsync(stream, envelope).WaitAsync(TimeSpan.FromSeconds(5));
+
+    private static async Task WriteMessageCoreAsync(Stream stream, object envelope)
     {
         var json = JsonSerializer.Serialize(envelope);
         var payload = Encoding.UTF8.GetBytes(json);
@@ -103,7 +118,10 @@ public class LucySessionAgentTests
         await stream.WriteAsync(payload);
     }
 
-    private static async Task<string> ReadMessageAsync(Stream stream)
+    private static Task<string> ReadMessageAsync(Stream stream) =>
+        ReadMessageCoreAsync(stream).WaitAsync(TimeSpan.FromSeconds(5));
+
+    private static async Task<string> ReadMessageCoreAsync(Stream stream)
     {
         var lengthBuffer = new byte[4];
         await ReadExactlyAsync(stream, lengthBuffer);
@@ -130,11 +148,13 @@ public class LucySessionAgentTests
         return buffer.Length;
     }
 
-    private sealed class FakeScreenCapture : IScreenCapture
+    private sealed class FakeScreenCapture : IScreenCapture, IScreenCaptureBounds
     {
+        public (int Width, int Height) GetPrimaryScreenSize() => (64, 48);
+
         public ScreenFrame CapturePrimaryScreen(int width = 0, int height = 0)
         {
-            var frame = new ScreenFrame(64, 48, PixelFormat.Standard32Argb8888);
+            var frame = new ScreenFrame(width == 0 ? 64 : width, height == 0 ? 48 : height, PixelFormat.Standard32Argb8888);
             frame.Fill(10, 20, 30);
             return frame;
         }

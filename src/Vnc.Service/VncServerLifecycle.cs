@@ -45,16 +45,23 @@ public sealed class VncServerLifecycle : IDisposable
         return Task.CompletedTask;
     }
 
-    public Task StopAsync(CancellationToken cancellationToken = default)
+    public async Task StopAsync(CancellationToken cancellationToken = default)
     {
         var server = _server;
         if (server is null)
         {
-            return Task.CompletedTask;
+            return;
         }
 
         _server = null;
-        return server.StopAsync();
+        try
+        {
+            await server.StopAsync().ConfigureAwait(false);
+        }
+        finally
+        {
+            server.Dispose();
+        }
     }
 
     public void Dispose()

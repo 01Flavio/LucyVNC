@@ -17,7 +17,7 @@ public sealed class AgentScreenCapture : IScreenCapture
 
     public ScreenFrame CapturePrimaryScreen(int width = 0, int height = 0)
     {
-        return _client.RequestFrameAsync(CancellationToken.None).GetAwaiter().GetResult();
+        return _client.RequestFrameAsync(width, height, CancellationToken.None).GetAwaiter().GetResult();
     }
 
     public void Dispose()

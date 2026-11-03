@@ -14,6 +14,7 @@ public sealed class ServiceSharingControllerTests
 
         Assert.False(configuration.RemoteSharingEnabled);
         Assert.Equal(IPAddress.Loopback.ToString(), configuration.BindAddress);
+        Assert.Equal(5901, configuration.Port);
         Assert.True(configuration.AuthenticationRequired);
         Assert.Equal(1, configuration.MaxSessions);
         Assert.Equal(ServiceSharingState.Disabled, ServiceSharingController.Evaluate(configuration).State);

@@ -24,6 +24,6 @@ public static class ServiceSharingController
 
         return new ServiceSharingDiagnostic(
             ServiceSharingState.Enabled,
-            "Remote sharing is enabled. The worker opens the authenticated RFB listener on the configured address.");
+            "Remote sharing is enabled. The worker requires an authenticated interactive-session agent before opening the authenticated RFB listener.");
     }
 }

@@ -21,6 +21,8 @@
   <ItemGroup>
     <ProjectReference Include="..\..\src\Vnc.Agent\Vnc.Agent.csproj" />
     <ProjectReference Include="..\..\src\Vnc.Service\Vnc.Service.csproj" />
+    <ProjectReference Include="..\..\src\Vnc.Viewer\Vnc.Viewer.csproj" />
+    <ProjectReference Include="..\Vnc.ProcessHost\Vnc.ProcessHost.csproj" ReferenceOutputAssembly="false" />
   </ItemGroup>
 
 </Project>

@@ -1,5 +1,6 @@
 using System.Collections.Concurrent;
 using System.IO.Pipes;
+using System.Security.Principal;
 using Vnc.Agent;
 using Vnc.Core;
 using Vnc.Platform.Windows;
@@ -9,7 +10,7 @@ namespace Vnc.Service.Tests;
 
 public class LucyAgentIpcTests
 {
-    private const string AuthorizedSid = "S-1-5-21-1004346348-1177238915-682003330-500";
+    private static string AuthorizedSid => WindowsIdentity.GetCurrent().User?.Value ?? "S-1-5-21-1004346348-1177238915-682003330-500";
 
     [Fact]
     public async Task LucyAgentClientConnectsToLucySessionAgentAndExchangesFrameAndInput()
@@ -22,7 +23,7 @@ public class LucyAgentIpcTests
         await client.ConnectAsync(CancellationToken.None);
         Assert.True(client.IsConnected);
 
-        var frame = await client.RequestFrameAsync(CancellationToken.None);
+        var frame = await client.RequestFrameAsync(64, 48, CancellationToken.None);
         Assert.Equal(64, frame.Width);
         Assert.Equal(48, frame.Height);
         Assert.Equal(64 * 48 * 4, frame.PixelData.Length);
@@ -36,8 +37,10 @@ public class LucyAgentIpcTests
         await agent.StopAsync();
     }
 
-    private sealed class FakeScreenCapture : IScreenCapture
+    private sealed class FakeScreenCapture : IScreenCapture, IScreenCaptureBounds
     {
+        public (int Width, int Height) GetPrimaryScreenSize() => (64, 48);
+
         public ScreenFrame CapturePrimaryScreen(int width = 0, int height = 0)
         {
             var frame = new ScreenFrame(width <= 0 ? 64 : width, height <= 0 ? 48 : height, PixelFormat.Standard32Argb8888);

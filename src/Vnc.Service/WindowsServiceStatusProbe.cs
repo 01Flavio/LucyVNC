@@ -39,11 +39,11 @@ public static class WindowsServiceStatusProbe
 
                 return status.CurrentState switch
                 {
-                    ServiceRunning => "Service is running. It still refuses remote sharing until a real interactive-session agent is attached.",
-                    ServiceStartPending => "Service is starting. Remote sharing remains unavailable without an interactive-session agent.",
+                    ServiceRunning => "Worker is running. Sharing is available only while configuration, VNC password, and the authenticated interactive-session agent are valid.",
+                    ServiceStartPending => "Worker is starting. Sharing is not confirmed until the interactive-session agent is authenticated.",
                     ServiceStopPending => "Service is stopping. No interactive-session screen access is supported.",
                     ServiceStopped => "Service is installed but stopped. No service listener is active.",
-                    _ => $"Service is installed (SCM state {status.CurrentState}). No interactive-session screen access is supported.",
+                    _ => $"Service is installed (SCM state {status.CurrentState}). Sharing requires an authenticated interactive-session agent.",
                 };
             }
             finally

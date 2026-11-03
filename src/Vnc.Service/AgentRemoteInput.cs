@@ -30,6 +30,7 @@ public sealed class AgentRemoteInput : IRemoteInput
 
     public void ReleaseAll()
     {
+        _client.ReleaseAllAsync(CancellationToken.None).GetAwaiter().GetResult();
     }
 
     public void Dispose()

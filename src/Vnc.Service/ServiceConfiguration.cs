@@ -6,7 +6,7 @@ public sealed record ServiceConfiguration
 {
     public bool RemoteSharingEnabled { get; init; }
     public string BindAddress { get; init; } = IPAddress.Loopback.ToString();
-    public int Port { get; init; } = 5900;
+    public int Port { get; init; } = 5901;
     public bool AuthenticationRequired { get; init; } = true;
     public int MaxSessions { get; init; } = 1;
 

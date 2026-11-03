@@ -13,16 +13,30 @@ public sealed class ServiceConfigurationStore
     };
 
     private readonly string _directoryPath;
+    private readonly string _configurationPath;
+    private readonly string? _developmentUserSid;
 
-    public ServiceConfigurationStore(string? directoryPath = null)
+    public ServiceConfigurationStore(string? configurationPath = null)
     {
-        _directoryPath = directoryPath ?? Path.Combine(
-            Environment.GetFolderPath(Environment.SpecialFolder.CommonApplicationData),
-            "LucyVNC",
-            "Service");
+        if (string.IsNullOrWhiteSpace(configurationPath))
+        {
+            _directoryPath = Path.Combine(
+                Environment.GetFolderPath(Environment.SpecialFolder.CommonApplicationData),
+                "LucyVNC",
+                "Service");
+            _configurationPath = Path.Combine(_directoryPath, "service.json");
+        }
+        else
+        {
+            _configurationPath = Path.GetFullPath(configurationPath);
+            _directoryPath = Path.GetDirectoryName(_configurationPath)
+                ?? throw new ArgumentException("The development configuration path must include a directory.", nameof(configurationPath));
+            _developmentUserSid = WindowsIdentity.GetCurrent().User?.Value
+                ?? throw new InvalidOperationException("Could not resolve the current Windows user for development configuration.");
+        }
     }
 
-    public string ConfigurationPath => Path.Combine(_directoryPath, "service.json");
+    public string ConfigurationPath => _configurationPath;
 
     public ServiceConfiguration LoadOrCreate()
     {
@@ -37,6 +51,7 @@ public sealed class ServiceConfigurationStore
             throw new UnauthorizedAccessException("The service configuration file cannot be a reparse point.");
         }
 
+        ApplyServiceAcl(ConfigurationPath, isDirectory: false, _developmentUserSid);
         var configuration = JsonSerializer.Deserialize<ServiceConfiguration>(
             File.ReadAllText(ConfigurationPath),
             JsonOptions) ?? throw new InvalidDataException("The service configuration is empty.");
@@ -59,9 +74,9 @@ public sealed class ServiceConfigurationStore
                 stream.Flush(flushToDisk: true);
             }
 
-            ApplyServiceAcl(temporaryPath, isDirectory: false);
+            ApplyServiceAcl(temporaryPath, isDirectory: false, _developmentUserSid);
             File.Move(temporaryPath, ConfigurationPath, overwrite: true);
-            ApplyServiceAcl(ConfigurationPath, isDirectory: false);
+            ApplyServiceAcl(ConfigurationPath, isDirectory: false, _developmentUserSid);
         }
         finally
         {
@@ -81,10 +96,10 @@ public sealed class ServiceConfigurationStore
             throw new UnauthorizedAccessException("The service configuration directory cannot be a reparse point.");
         }
 
-        ApplyServiceAcl(_directoryPath, isDirectory: true);
+        ApplyServiceAcl(_directoryPath, isDirectory: true, _developmentUserSid);
     }
 
-    private static void ApplyServiceAcl(string path, bool isDirectory)
+    private static void ApplyServiceAcl(string path, bool isDirectory, string? additionalUserSid)
     {
         var security = isDirectory
             ? (FileSystemSecurity)new DirectorySecurity()
@@ -93,18 +108,30 @@ public sealed class ServiceConfigurationStore
         var inheritance = isDirectory
             ? InheritanceFlags.ContainerInherit | InheritanceFlags.ObjectInherit
             : InheritanceFlags.None;
-        security.AddAccessRule(new FileSystemAccessRule(
-            new SecurityIdentifier(WellKnownSidType.LocalSystemSid, null),
-            FileSystemRights.FullControl,
-            inheritance,
-            PropagationFlags.None,
-            AccessControlType.Allow));
-        security.AddAccessRule(new FileSystemAccessRule(
-            new SecurityIdentifier(WellKnownSidType.BuiltinAdministratorsSid, null),
-            FileSystemRights.FullControl,
-            inheritance,
-            PropagationFlags.None,
-            AccessControlType.Allow));
+        if (additionalUserSid is null)
+        {
+            security.AddAccessRule(new FileSystemAccessRule(
+                new SecurityIdentifier(WellKnownSidType.LocalSystemSid, null),
+                FileSystemRights.FullControl,
+                inheritance,
+                PropagationFlags.None,
+                AccessControlType.Allow));
+            security.AddAccessRule(new FileSystemAccessRule(
+                new SecurityIdentifier(WellKnownSidType.BuiltinAdministratorsSid, null),
+                FileSystemRights.FullControl,
+                inheritance,
+                PropagationFlags.None,
+                AccessControlType.Allow));
+        }
+        else
+        {
+            security.AddAccessRule(new FileSystemAccessRule(
+                new SecurityIdentifier(additionalUserSid),
+                FileSystemRights.FullControl,
+                inheritance,
+                PropagationFlags.None,
+                AccessControlType.Allow));
+        }
 
         if (isDirectory)
         {

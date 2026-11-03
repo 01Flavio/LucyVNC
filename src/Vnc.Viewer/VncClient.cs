@@ -29,6 +29,7 @@ public sealed class VncViewerSession : IAsyncDisposable
     private NetworkStream? _stream;
     private byte[]? _framebuffer;
     private CancellationTokenSource? _sessionCancellation;
+    private CancellationToken _sessionToken;
     private ushort _width;
     private ushort _height;
     private bool _disposed;
@@ -60,6 +61,7 @@ public sealed class VncViewerSession : IAsyncDisposable
         _tcpClient = client;
         _sessionCancellation = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
         var token = _sessionCancellation.Token;
+        _sessionToken = token;
         try
         {
             StatusChanged?.Invoke(this, "Connecting...");
@@ -130,38 +132,41 @@ public sealed class VncViewerSession : IAsyncDisposable
 
     public async Task RunAsync(CancellationToken cancellationToken = default)
     {
-        if (!IsConnected || _stream is null || _framebuffer is null)
+        var stream = _stream;
+        var framebuffer = _framebuffer;
+        var sessionToken = _sessionToken;
+        if (!IsConnected || stream is null || framebuffer is null)
         {
             throw new InvalidOperationException("ConnectAsync must complete before RunAsync.");
         }
 
-        using var linked = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken, _sessionCancellation!.Token);
+        using var linked = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken, sessionToken);
         var token = linked.Token;
         try
         {
             while (!token.IsCancellationRequested)
             {
-                var messageType = await ReadByteAsync(_stream, token).ConfigureAwait(false);
+                var messageType = await ReadByteAsync(stream, token).ConfigureAwait(false);
                 switch (messageType)
                 {
                     case 0:
                         var rectangles = await RfbProtocol.ReadFramebufferUpdateAsync(
-                            _stream, _width, _height, PixelFormat.Standard32Argb8888,
+                            stream, _width, _height, PixelFormat.Standard32Argb8888,
                             _settings.FramebufferLimitBytes, token, messageTypeAlreadyRead: true).ConfigureAwait(false);
-                        var rendered = ApplyRectangles(rectangles, PixelFormat.Standard32Argb8888);
+                        var rendered = ApplyRectangles(rectangles, PixelFormat.Standard32Argb8888, framebuffer);
                         FramebufferUpdated?.Invoke(this, new FramebufferUpdatedEventArgs(_width, _height, rendered));
-                        await SendFramebufferUpdateRequestAsync(true, token).ConfigureAwait(false);
+                        await SendFramebufferUpdateRequestAsync(true, token, stream).ConfigureAwait(false);
                         break;
                     case 1:
-                        await SkipAsync(_stream, 1 + 2 + (int)(await RfbProtocol.ReadUInt16Async(_stream, token).ConfigureAwait(false) * 6), token).ConfigureAwait(false);
+                        await SkipAsync(stream, 1 + 2 + (int)(await RfbProtocol.ReadUInt16Async(stream, token).ConfigureAwait(false) * 6), token).ConfigureAwait(false);
                         break;
                     case 2:
                         StatusChanged?.Invoke(this, "Remote server sent a bell.");
                         break;
                     case 3:
-                        await SkipAsync(_stream, 3, token).ConfigureAwait(false);
-                        var cutTextLength = await RfbProtocol.ReadBoundedLengthAsync(_stream, RfbProtocol.MaximumDesktopNameBytes, token).ConfigureAwait(false);
-                        await SkipAsync(_stream, cutTextLength, token).ConfigureAwait(false);
+                        await SkipAsync(stream, 3, token).ConfigureAwait(false);
+                        var cutTextLength = await RfbProtocol.ReadBoundedLengthAsync(stream, RfbProtocol.MaximumDesktopNameBytes, token).ConfigureAwait(false);
+                        await SkipAsync(stream, cutTextLength, token).ConfigureAwait(false);
                         break;
                     default:
                         throw new InvalidDataException($"Unsupported server message type {messageType}.");
@@ -169,6 +174,12 @@ public sealed class VncViewerSession : IAsyncDisposable
             }
         }
         catch (OperationCanceledException) when (token.IsCancellationRequested)
+        {
+        }
+        catch (ObjectDisposedException) when (token.IsCancellationRequested)
+        {
+        }
+        catch (InvalidOperationException) when (token.IsCancellationRequested)
         {
         }
         catch (IOException)
@@ -277,14 +288,17 @@ public sealed class VncViewerSession : IAsyncDisposable
         }
     }
 
-    private async Task SendFramebufferUpdateRequestAsync(bool incremental, CancellationToken cancellationToken)
+    private async Task SendFramebufferUpdateRequestAsync(bool incremental, CancellationToken cancellationToken, Stream? sessionStream = null)
     {
-        await SendAsync(stream => RfbProtocol.WriteFramebufferUpdateRequest(stream, 0, 0, _width, _height, incremental), cancellationToken).ConfigureAwait(false);
+        await SendAsync(
+            stream => RfbProtocol.WriteFramebufferUpdateRequest(stream, 0, 0, _width, _height, incremental),
+            cancellationToken,
+            sessionStream).ConfigureAwait(false);
     }
 
-    private async Task SendAsync(Action<Stream> write, CancellationToken cancellationToken)
+    private async Task SendAsync(Action<Stream> write, CancellationToken cancellationToken, Stream? sessionStream = null)
     {
-        var stream = _stream ?? throw new InvalidOperationException("Viewer is not connected.");
+        var stream = sessionStream ?? _stream ?? throw new InvalidOperationException("Viewer is not connected.");
         await _sendLock.WaitAsync(cancellationToken).ConfigureAwait(false);
         try
         {
@@ -298,15 +312,18 @@ public sealed class VncViewerSession : IAsyncDisposable
         }
     }
 
-    private IReadOnlyList<FramebufferRectangle> ApplyRectangles(IReadOnlyList<FramebufferRectangle> rectangles, PixelFormat format)
+    private IReadOnlyList<FramebufferRectangle> ApplyRectangles(
+        IReadOnlyList<FramebufferRectangle> rectangles,
+        PixelFormat format,
+        byte[] framebuffer)
     {
         var output = new List<FramebufferRectangle>(rectangles.Count);
         foreach (var rectangle in rectangles)
         {
             var decoded = rectangle.Encoding == RfbProtocol.RawEncoding
                 ? DecodeRaw(rectangle, format)
-                : CopyRectangle(rectangle);
-            CopyToFramebuffer(rectangle.X, rectangle.Y, rectangle.Width, rectangle.Height, decoded);
+                : CopyRectangle(rectangle, framebuffer);
+            CopyToFramebuffer(rectangle.X, rectangle.Y, rectangle.Width, rectangle.Height, decoded, framebuffer);
             output.Add(rectangle with { Data = decoded, Encoding = RfbProtocol.RawEncoding });
         }
 
@@ -350,26 +367,26 @@ public sealed class VncViewerSession : IAsyncDisposable
         return pixels;
     }
 
-    private byte[] CopyRectangle(FramebufferRectangle rectangle)
+    private byte[] CopyRectangle(FramebufferRectangle rectangle, byte[] framebuffer)
     {
         var copy = new byte[checked(rectangle.Width * rectangle.Height * 4)];
         var rowBytes = rectangle.Width * 4;
         for (var row = 0; row < rectangle.Height; row++)
         {
             var sourceOffset = ((rectangle.SourceY + row) * _width + rectangle.SourceX) * 4;
-            Buffer.BlockCopy(_framebuffer!, sourceOffset, copy, row * rowBytes, rowBytes);
+            Buffer.BlockCopy(framebuffer, sourceOffset, copy, row * rowBytes, rowBytes);
         }
 
         return copy;
     }
 
-    private void CopyToFramebuffer(ushort x, ushort y, ushort width, ushort height, byte[] pixels)
+    private void CopyToFramebuffer(ushort x, ushort y, ushort width, ushort height, byte[] pixels, byte[] framebuffer)
     {
         var rowBytes = width * 4;
         for (var row = 0; row < height; row++)
         {
             var destinationOffset = ((y + row) * _width + x) * 4;
-            Buffer.BlockCopy(pixels, row * rowBytes, _framebuffer!, destinationOffset, rowBytes);
+            Buffer.BlockCopy(pixels, row * rowBytes, framebuffer, destinationOffset, rowBytes);
         }
     }
 

@@ -1,18 +1,27 @@
 # Installation and operation
 
-## LucyVNC Viewer
+## Self-contained application and installer
 
-The self-contained WPF application is published separately from the optional LucyServer Worker Service. There is no product installer.
-
-From a Windows PowerShell prompt at the solution root:
+The repository includes an Inno Setup definition for the Manager, Worker, Agent, and service scripts. To build the x64 installer, publish each executable before compiling the installer:
 
 ```powershell
 dotnet restore "LucyVNC.slnx"
 dotnet publish "src/Vnc.App/Vnc.App.csproj" -c Release -r win-x64 --self-contained true
+dotnet publish "src/Vnc.Service/Vnc.Service.csproj" -c Release -r win-x64 --self-contained true
+dotnet publish "src/Vnc.Agent/Vnc.Agent.csproj" -c Release -r win-x64 --self-contained true
+& "C:\Users\Zero\AppData\Local\Programs\Inno Setup 6\ISCC.exe" "installer\LucyVNC.iss"
+```
+
+The installer output is written to `artifacts\LucyVNC-Setup-2.3.0-x64.exe`. Installing the application does not install/start LucyServer, register the Agent, or create firewall rules. Launch `LucyViewer.exe` from the installed application directory.
+
+To publish only the WPF Manager for development:
+
+```powershell
+dotnet publish "src/Vnc.App/Vnc.App.csproj" -c Release -r win-x64 --self-contained true
 Start-Process ".\src\Vnc.App\bin\Release\net8.0-windows\win-x64\publish\LucyViewer.exe"
 ```
 
-Publishing does not install a service, configure startup, or create Windows Firewall rules. Remove the published directory to remove this development build.
+Publishing does not install a service, configure startup, or create Windows Firewall rules. Remove the published directory to remove a development build.
 
 Connection settings can be transferred from **Importar conexões** / **Exportar conexões** in the Manager. The files are configuration-only and contain no VNC passwords or Credential Manager data. The version-1 JSON shape and CSV columns are documented in the root [README](../README.md#connection-transfer-files).
 
@@ -33,7 +42,11 @@ Do not expose classic VNC directly to an untrusted network. The protocol does no
 
 ## LucyServer Worker and interactive Agent
 
-The Worker Service and the interactive-session Agent are separate executables. The Agent performs desktop capture and `SendInput` in the logged-in user's session; the Worker owns the RFB listener and connects to the Agent over a SID-restricted, versioned named-pipe protocol. The automated process integration test uses synthetic capture/input and does not prove real desktop capture, real input injection, SCM startup, or service-to-user-session launch. Production service lifecycle management of the Agent is not implemented.
+The Worker Service and the interactive-session Agent are separate executables. The Agent performs desktop capture and `SendInput` in the logged-in user's session; the Worker owns the RFB listener and connects to the Agent over a versioned named-pipe protocol with Windows SID checks. The Manager's **Acessos** page can save the service configuration through UAC, install/start/stop/restart/uninstall the service through explicit elevated actions, and display SCM diagnostics. A running service is restarted after configuration is saved. The password is stored as DPAPI LocalMachine ciphertext in ProgramData with an ACL for SYSTEM and Administrators; it is not shown back in the Manager. The automated process integration test uses synthetic capture/input and does not prove real desktop capture, real input injection, or operation of an installed service.
+
+The service is installed as Automatic but left stopped. To share the interactive desktop, sign in to the intended Windows user, configure the service in the Manager, optionally enable the per-user Agent startup supervisor, install the service, and start it. The startup supervisor launches the Agent at that user's logon and restarts it after an unexpected failure; it is not managed by SCM and does not broker logon, logout, lock, user switches, or secure-desktop access. Although the Worker is intended to authenticate as LocalSystem to the session Agent, **that identity boundary has not been validated with a real installed service**. Do not treat successful installation or SCM `Running` status as proof that remote desktop sharing is operational.
+
+Service lifecycle actions in the Manager invoke UAC. The equivalent scripts in `scripts\` also require an elevated PowerShell session. Installation is reversible, leaves the service stopped, and does not configure a firewall. Uninstalling the application is blocked while LucyServer remains installed; remove the service first from **Acessos** or with `Uninstall-LucyServerService.ps1`.
 
 For a controlled **development-only** local test, publish/build the service and Agent first. This run starts the real Agent, which can move the local cursor and type into the interactive desktop when a connected Viewer sends input. Use a disposable test session with no sensitive application focused. VNC transport is unencrypted; this procedure binds only loopback and does not create firewall rules or install a service.
 
@@ -75,13 +88,13 @@ finally {
 
 Connect LucyViewer to `127.0.0.1:5901`. Stop the Worker by entering `STOP` in window 2, then stop the Agent with Ctrl+C in window 1. The password exists in the Worker process environment only; do not capture or share diagnostic output from a test containing sensitive information. Do not use this procedure on a production desktop.
 
-For optional SCM lifecycle testing only, publish the executable. Installing or starting this Worker does not configure a production VNC credential or launch an interactive Agent; SCM state alone does not mean desktop sharing is available:
+For optional SCM lifecycle testing, publish the executable. The Manager's protected configuration flow stores a durable credential before service startup; the development-only environment variable shown above is an alternative for console tests. SCM state alone does not mean desktop sharing is available:
 
 ```powershell
 dotnet publish "src/Vnc.Service/Vnc.Service.csproj" -c Release -r win-x64 --self-contained true
 ```
 
-In an elevated PowerShell session, use the scripts below. Installation is Automatic but leaves the service stopped; start is a separate action. No service-to-interactive-user Agent launcher is provided, so SCM installation alone does not provide desktop sharing. Stop and uninstall ask for confirmation. None of the scripts creates or edits firewall rules.
+In an elevated PowerShell session, the scripts below provide the same service lifecycle operations as the Manager. Installation is Automatic but leaves the service stopped; start is a separate action. No service-to-interactive-user Agent launcher is provided, so SCM installation alone does not provide desktop sharing. Stop and uninstall ask for confirmation. None of the scripts creates or edits firewall rules.
 
 ```powershell
 .\scripts\Install-LucyServerService.ps1
@@ -91,4 +104,4 @@ In an elevated PowerShell session, use the scripts below. Installation is Automa
 .\scripts\Uninstall-LucyServerService.ps1
 ```
 
-Do not register `LucyViewer.exe` or `Vnc.Agent.exe` as a Windows Service: WPF, screen capture, and `SendInput` require the user's interactive session, while a Windows Service normally runs in Session 0. The versioned Service/Agent IPC checks Windows user SIDs and protects the pipe with an ACL, but has only same-user development validation; it is not a binary-signing boundary. The SCM-to-interactive-session Agent launcher, durable service credential management, and login/logout/lock/session-switch lifecycle are not implemented. Session 0 provides no supported access to the signed-in desktop; secure desktop, UAC, and pre-login control are not implemented.
+Do not register `LucyViewer.exe` or `Vnc.Agent.exe` as a Windows Service: WPF, screen capture, and `SendInput` require the user's interactive session, while a Windows Service normally runs in Session 0. The Service/Agent IPC checks Windows user SIDs and protects the pipe with an ACL, but this is not a binary-signing boundary. The SCM-to-interactive-session Agent identity relationship and session lifecycle are not validated. Session 0 provides no supported access to the signed-in desktop; secure desktop, UAC, and pre-login control are not implemented.

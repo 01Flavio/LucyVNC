@@ -421,10 +421,17 @@ public sealed class LucySessionAgent : IDisposable
     {
         var security = new PipeSecurity();
         security.SetAccessRuleProtection(isProtected: true, preserveInheritance: false);
-        security.AddAccessRule(new PipeAccessRule(
-            new SecurityIdentifier(_authorizedWorkerSid),
-            PipeAccessRights.ReadWrite,
-            AccessControlType.Allow));
+        var currentSid = WindowsIdentity.GetCurrent().User
+            ?? throw new InvalidOperationException("Could not resolve the LucySessionAgent Windows identity.");
+        security.AddAccessRule(new PipeAccessRule(currentSid, PipeAccessRights.FullControl, AccessControlType.Allow));
+        if (!string.Equals(currentSid.Value, _authorizedWorkerSid, StringComparison.OrdinalIgnoreCase))
+        {
+            security.AddAccessRule(new PipeAccessRule(
+                new SecurityIdentifier(_authorizedWorkerSid),
+                PipeAccessRights.ReadWrite,
+                AccessControlType.Allow));
+        }
+
         return security;
     }
 

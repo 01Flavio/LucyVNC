@@ -358,17 +358,39 @@
                         </ScrollViewer>
                     </Border>
                     <Border Grid.Column="1" Style="{StaticResource LucyCard}" Padding="20">
-                        <StackPanel>
-                            <TextBlock Text="LucyServer Windows Service" FontSize="18" FontWeight="SemiBold" Foreground="{StaticResource Accent}" />
-                            <TextBlock x:Name="ServiceStatus" Text="Consultando o Service Control Manager..."
-                                       Margin="0,10,0,0" TextWrapping="Wrap" />
-                            <TextBlock Text="O listener só fica ativo quando o compartilhamento está explicitamente habilitado, há senha válida e o agente interativo autenticado está conectado. A sessão 0 nunca captura a tela nem injeta entrada; logon, desktop seguro e sessões não interativas não são suportados."
-                                       Foreground="{StaticResource Warning}" Margin="0,18,0,0" TextWrapping="Wrap" />
-                            <TextBlock Text="Compartilhamento remoto permanece desabilitado por padrão. A configuração persistente não contém senha; autenticação é obrigatória, o limite é uma sessão e não há alterações de firewall."
-                                       Foreground="{StaticResource TextSecondary}" Margin="0,18,0,0" TextWrapping="Wrap" />
-                            <TextBlock Text="A configuração de desenvolvimento pode usar 127.0.0.1:5901. O serviço não fornece controles de instalação/inicialização nesta tela; o compartilhamento em primeiro plano à esquerda continua independente."
-                                       Foreground="{StaticResource TextSecondary}" Margin="0,18,0,0" TextWrapping="Wrap" />
-                        </StackPanel>
+                        <ScrollViewer VerticalScrollBarVisibility="Auto">
+                            <StackPanel>
+                                <TextBlock Text="LucyServer — configuração e serviço" FontSize="18" FontWeight="SemiBold" Foreground="{StaticResource Accent}" />
+                                <TextBlock x:Name="ServiceStatus" Text="Consultando o Service Control Manager..."
+                                           Margin="0,10,0,12" TextWrapping="Wrap" />
+                                <CheckBox x:Name="ServiceSharingCheckBox" Content="Habilitar compartilhamento do LucyServer"
+                                          Margin="0,0,0,8" />
+                                <TextBlock Text="Endereço de bind (loopback ou IP privado/VPN)" Foreground="{StaticResource TextSecondary}" FontSize="11" />
+                                <TextBox x:Name="ServiceBindAddressBox" Text="127.0.0.1" />
+                                <TextBlock Text="Porta TCP" Foreground="{StaticResource TextSecondary}" FontSize="11" />
+                                <TextBox x:Name="ServicePortBox" Text="5901" />
+                                <TextBlock Text="Senha VNC (8 caracteres ASCII)" Foreground="{StaticResource TextSecondary}" FontSize="11" />
+                                <PasswordBox x:Name="ServicePasswordBox" MaxLength="8" />
+                                <CheckBox x:Name="AgentAutoStartCheckBox"
+                                          Content="Iniciar o agente de desktop automaticamente no logon deste usuário"
+                                          Margin="0,7,0,12" />
+                                <Button Content="Salvar configuração protegida" Style="{StaticResource PrimaryButton}"
+                                        Click="SaveServiceConfiguration_Click" />
+                                <TextBlock Text="A senha é protegida por DPAPI e ACL de SYSTEM/Administradores. O tráfego VNC clássico não é criptografado."
+                                           Foreground="{StaticResource TextSecondary}" FontSize="10" Margin="0,7,0,12" TextWrapping="Wrap" />
+                                <WrapPanel>
+                                    <Button Content="Instalar serviço..." Style="{StaticResource CompactButton}" Click="InstallService_Click" />
+                                    <Button Content="Iniciar" Style="{StaticResource CompactButton}" Click="StartService_Click" />
+                                    <Button Content="Parar" Style="{StaticResource CompactButton}" Click="StopService_Click" />
+                                    <Button Content="Reiniciar" Style="{StaticResource CompactButton}" Click="RestartService_Click" />
+                                    <Button Content="Desinstalar..." Style="{StaticResource CompactButton}" Click="UninstallService_Click" />
+                                </WrapPanel>
+                                <TextBlock Text="O Agent roda como o usuário interativo; o Worker usa a identidade do serviço. Troca de usuário, bloqueio, desktop seguro, UAC e pré-logon não são suportados. A configuração e o ciclo de vida do serviço exigem elevação via UAC."
+                                           Foreground="{StaticResource Warning}" Margin="0,14,0,0" TextWrapping="Wrap" />
+                                <TextBlock Text="O agente automático do logon é uma opção por usuário. Desmarcá-la remove a inicialização futura, mas não encerra à força um Agent já ativo."
+                                           Foreground="{StaticResource TextSecondary}" Margin="0,12,0,0" TextWrapping="Wrap" />
+                            </StackPanel>
+                        </ScrollViewer>
                     </Border>
                 </Grid>
 

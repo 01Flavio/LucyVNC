@@ -10,10 +10,21 @@ namespace Vnc.Service;
 
 internal static class Program
 {
-    public static Task Main(string[] args) =>
-        args.Contains(ServiceHostBuilder.ConsoleModeArgument, StringComparer.OrdinalIgnoreCase)
+    public static Task Main(string[] args)
+    {
+        if (args.Length == 2 && string.Equals(args[0], "--configure", StringComparison.OrdinalIgnoreCase))
+        {
+            var serviceRestarted = ServiceConfigurationProvisioner.ApplyProtectedRequest(args[1]);
+            Console.WriteLine(serviceRestarted
+                ? "LucyServer configuration was saved securely and the running service was restarted."
+                : "LucyServer configuration was saved securely. Start the service to apply it.");
+            return Task.CompletedTask;
+        }
+
+        return args.Contains(ServiceHostBuilder.ConsoleModeArgument, StringComparer.OrdinalIgnoreCase)
             ? RunConsoleAsync(args)
             : ServiceHostBuilder.Create(args).Build().RunAsync();
+    }
 
     private static async Task RunConsoleAsync(string[] args)
     {
@@ -25,7 +36,9 @@ internal static class Program
         {
         }
 
+        Console.WriteLine("STOPPING:WORKER");
         await host.StopAsync().ConfigureAwait(false);
+        Console.WriteLine("STOPPED:WORKER");
     }
 }
 
@@ -97,12 +110,25 @@ internal sealed class ServiceWorker : BackgroundService
             return;
         }
 
-        var password = ResolveVncPassword();
+        string? password;
+        try
+        {
+            password = new ServiceCredentialStore().Load();
+        }
+        catch (FileNotFoundException)
+        {
+            password = ResolveVncPassword();
+        }
+        catch (Exception exception) when (exception is IOException or UnauthorizedAccessException or System.Security.SecurityException or System.Security.Cryptography.CryptographicException or InvalidDataException)
+        {
+            _logger.LogError("LucyVNC service credential could not be loaded: {Reason}. No listener was opened.", exception.Message);
+            return;
+        }
+
         if (password is null)
         {
             _logger.LogWarning(
-                "LucyVNC remote sharing is enabled but {EnvironmentVariable} is missing or is not a valid eight-character ASCII VNC password. No listener was opened.",
-                VncPasswordEnvironmentVariable);
+                "LucyVNC remote sharing is enabled but no valid protected VNC password is configured. No listener was opened.");
             return;
         }
 
@@ -112,7 +138,9 @@ internal sealed class ServiceWorker : BackgroundService
             VncServerLifecycle? lifecycle = null;
             try
             {
-                var agentSid = Environment.GetEnvironmentVariable(ServiceHostBuilder.AgentSidEnvironmentVariable);
+                var agentSid = string.IsNullOrWhiteSpace(configuration.AgentSid)
+                    ? Environment.GetEnvironmentVariable(ServiceHostBuilder.AgentSidEnvironmentVariable)
+                    : configuration.AgentSid;
                 if (string.IsNullOrWhiteSpace(agentSid))
                 {
                     throw new InvalidOperationException(

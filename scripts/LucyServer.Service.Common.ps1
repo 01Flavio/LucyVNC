@@ -20,7 +20,7 @@ function Assert-LvcWindowsAdministrator {
 }
 
 function Write-LvcServiceNotice {
-    Write-Warning 'The Worker and Agent use versioned named-pipe IPC with Windows SID checks, but only same-user development operation is validated. SCM-to-interactive-session Agent launch, production credential storage, and session lifecycle management are not implemented; service state does not prove that an RFB listener is available. These scripts do not create firewall rules.'
+    Write-Warning 'The Worker and Agent use versioned named-pipe IPC with Windows SID checks, but SCM-to-interactive-session Agent authorization and lifecycle are not validated. Service state does not prove that an RFB listener is available. These scripts do not create firewall rules.'
 }
 
 function Get-LvcService {

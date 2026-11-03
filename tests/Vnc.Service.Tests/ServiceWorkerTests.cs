@@ -295,12 +295,14 @@ public class ServiceWorkerTests
     private sealed class ChildProcess : IDisposable
     {
         private readonly Process _process;
+        private readonly string _label;
         private readonly ConcurrentQueue<string> _output = new();
         private readonly SemaphoreSlim _outputChanged = new(0);
 
-        private ChildProcess(Process process)
+        private ChildProcess(Process process, string label)
         {
             _process = process;
+            _label = label;
             _process.OutputDataReceived += (_, args) =>
             {
                 if (args.Data is not null)
@@ -349,7 +351,16 @@ public class ServiceWorkerTests
 
             var process = Process.Start(startInfo)
                 ?? throw new InvalidOperationException($"Could not start process {executablePath}.");
-            return new ChildProcess(process);
+            var executableName = Path.GetFileNameWithoutExtension(executablePath);
+            var label = executableName switch
+            {
+                "Vnc.Service" => "WORKER",
+                "Vnc.ProcessHost" when startInfo.ArgumentList.FirstOrDefault() == "agent" => "AGENT",
+                "Vnc.ProcessHost" => "SERVER",
+                _ => executableName,
+            };
+
+            return new ChildProcess(process, label);
         }
 
         public async Task WaitForLineAsync(string expectedLine, TimeSpan timeout)
@@ -377,9 +388,28 @@ public class ServiceWorkerTests
                 return;
             }
 
-            await _process.StandardInput.WriteLineAsync("STOP");
-            await _process.StandardInput.FlushAsync();
-            await _process.WaitForExitAsync().WaitAsync(timeout);
+            try
+            {
+                await _process.StandardInput.WriteLineAsync("STOP");
+                await _process.StandardInput.FlushAsync();
+                await _process.WaitForExitAsync().WaitAsync(timeout);
+                try
+                {
+                    await WaitForLineAsync($"STOPPED:{_label}", TimeSpan.FromSeconds(2));
+                }
+                catch (OperationCanceledException)
+                {
+                    throw new InvalidOperationException(
+                        $"Process {_label} (PID {_process.Id}) exited without completing its graceful shutdown. Output:{Environment.NewLine}{string.Join(Environment.NewLine, _output)}");
+                }
+            }
+            catch (TimeoutException exception)
+            {
+                throw new TimeoutException(
+                    $"Process {_label} (PID {_process.Id}) did not stop within {timeout}. Output:{Environment.NewLine}{string.Join(Environment.NewLine, _output)}",
+                    exception);
+            }
+
             if (_process.ExitCode != 0)
             {
                 throw new InvalidOperationException(
@@ -389,6 +419,12 @@ public class ServiceWorkerTests
 
         public void Dispose()
         {
+            if (!_process.HasExited)
+            {
+                _process.Kill(entireProcessTree: true);
+                _process.WaitForExit();
+            }
+
             _outputChanged.Dispose();
             _process.Dispose();
         }

@@ -51,7 +51,37 @@ public sealed class ServiceConfigurationStore
             throw new UnauthorizedAccessException("The service configuration file cannot be a reparse point.");
         }
 
-        ApplyServiceAcl(ConfigurationPath, isDirectory: false, _developmentUserSid);
+        if (_developmentUserSid is null)
+        {
+            ApplyServiceAcl(_directoryPath, isDirectory: true, additionalUserSid: null, additionalReadSid: null);
+            ApplyServiceAcl(ConfigurationPath, isDirectory: false, additionalUserSid: null, additionalReadSid: null);
+        }
+
+        var configuration = JsonSerializer.Deserialize<ServiceConfiguration>(
+            File.ReadAllText(ConfigurationPath),
+            JsonOptions) ?? throw new InvalidDataException("The service configuration is empty.");
+        configuration.Validate();
+        if (_developmentUserSid is null)
+        {
+            ApplyServiceAcl(_directoryPath, isDirectory: true, additionalUserSid: null, configuration.AgentSid);
+        }
+
+        ApplyServiceAcl(ConfigurationPath, isDirectory: false, _developmentUserSid, configuration.AgentSid);
+        return configuration;
+    }
+
+    public ServiceConfiguration LoadExisting()
+    {
+        if (!File.Exists(ConfigurationPath))
+        {
+            return ServiceConfiguration.SafeDefaults;
+        }
+
+        if ((File.GetAttributes(ConfigurationPath) & FileAttributes.ReparsePoint) != 0)
+        {
+            throw new UnauthorizedAccessException("The service configuration file cannot be a reparse point.");
+        }
+
         var configuration = JsonSerializer.Deserialize<ServiceConfiguration>(
             File.ReadAllText(ConfigurationPath),
             JsonOptions) ?? throw new InvalidDataException("The service configuration is empty.");
@@ -64,6 +94,10 @@ public sealed class ServiceConfigurationStore
         ArgumentNullException.ThrowIfNull(configuration);
         configuration.Validate();
         EnsureSecureDirectory();
+        if (_developmentUserSid is null)
+        {
+            ApplyServiceAcl(_directoryPath, isDirectory: true, additionalUserSid: null, configuration.AgentSid);
+        }
 
         var temporaryPath = Path.Combine(_directoryPath, $"service.{Guid.NewGuid():N}.tmp");
         try
@@ -74,9 +108,9 @@ public sealed class ServiceConfigurationStore
                 stream.Flush(flushToDisk: true);
             }
 
-            ApplyServiceAcl(temporaryPath, isDirectory: false, _developmentUserSid);
+            ApplyServiceAcl(temporaryPath, isDirectory: false, _developmentUserSid, configuration.AgentSid);
             File.Move(temporaryPath, ConfigurationPath, overwrite: true);
-            ApplyServiceAcl(ConfigurationPath, isDirectory: false, _developmentUserSid);
+            ApplyServiceAcl(ConfigurationPath, isDirectory: false, _developmentUserSid, configuration.AgentSid);
         }
         finally
         {
@@ -89,6 +123,7 @@ public sealed class ServiceConfigurationStore
 
     private void EnsureSecureDirectory()
     {
+        var wasCreated = !Directory.Exists(_directoryPath);
         Directory.CreateDirectory(_directoryPath);
         var directory = new DirectoryInfo(_directoryPath);
         if ((directory.Attributes & FileAttributes.ReparsePoint) != 0)
@@ -96,10 +131,17 @@ public sealed class ServiceConfigurationStore
             throw new UnauthorizedAccessException("The service configuration directory cannot be a reparse point.");
         }
 
-        ApplyServiceAcl(_directoryPath, isDirectory: true, _developmentUserSid);
+        if (_developmentUserSid is not null || wasCreated)
+        {
+            ApplyServiceAcl(_directoryPath, isDirectory: true, _developmentUserSid, additionalReadSid: null);
+        }
     }
 
-    private static void ApplyServiceAcl(string path, bool isDirectory, string? additionalUserSid)
+    private static void ApplyServiceAcl(
+        string path,
+        bool isDirectory,
+        string? additionalUserSid,
+        string? additionalReadSid)
     {
         var security = isDirectory
             ? (FileSystemSecurity)new DirectorySecurity()
@@ -128,6 +170,16 @@ public sealed class ServiceConfigurationStore
             security.AddAccessRule(new FileSystemAccessRule(
                 new SecurityIdentifier(additionalUserSid),
                 FileSystemRights.FullControl,
+                inheritance,
+                PropagationFlags.None,
+                AccessControlType.Allow));
+        }
+
+        if (additionalUserSid is null && !string.IsNullOrWhiteSpace(additionalReadSid))
+        {
+            security.AddAccessRule(new FileSystemAccessRule(
+                new SecurityIdentifier(additionalReadSid),
+                isDirectory ? FileSystemRights.ReadAndExecute : FileSystemRights.Read,
                 inheritance,
                 PropagationFlags.None,
                 AccessControlType.Allow));

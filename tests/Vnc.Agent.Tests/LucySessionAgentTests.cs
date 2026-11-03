@@ -85,7 +85,7 @@ public class LucySessionAgentTests
     }
 
     [Fact]
-    public async Task LucySessionAgentPipeAclRejectsDifferentWindowsIdentity()
+    public async Task LucySessionAgentRejectsPeerWithDifferentWindowsIdentity()
     {
         var pipeName = $"LucyVNCAgentDenied_{Guid.NewGuid():N}";
         using var agent = new LucySessionAgent(
@@ -96,11 +96,16 @@ public class LucySessionAgentTests
         await agent.StartAsync();
 
         using var client = new NamedPipeClientStream(".", pipeName, PipeDirection.InOut, PipeOptions.None);
-        await Assert.ThrowsAnyAsync<Exception>(async () =>
+        await client.ConnectAsync();
+        await WriteMessageAsync(client, new
         {
-            using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(3));
-            await client.ConnectAsync(timeout.Token);
+            Type = "Hello",
+            Payload = new { Sid = WindowsIdentity.GetCurrent().User?.Value },
         });
+
+        using var response = JsonDocument.Parse(await ReadMessageAsync(client));
+        Assert.Equal("HelloAck", response.RootElement.GetProperty("Type").GetString());
+        Assert.False(response.RootElement.GetProperty("Payload").GetProperty("Accepted").GetBoolean());
 
         await agent.StopAsync();
     }

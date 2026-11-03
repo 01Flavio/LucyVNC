@@ -33,7 +33,9 @@ internal static class Program
             {
             }
 
+            Console.WriteLine("STOPPING:AGENT");
             await agent.StopAsync();
+            Console.WriteLine("STOPPED:AGENT");
         }
     }
 
@@ -58,7 +60,9 @@ internal static class Program
         {
         }
 
+        Console.WriteLine("STOPPING:SERVER");
         await server.StopAsync();
+        Console.WriteLine("STOPPED:SERVER");
     }
 
     private sealed class SyntheticCapture : IScreenCapture, IScreenCaptureBounds

@@ -3,6 +3,7 @@ using System.Diagnostics;
 using System.IO;
 using System.Net;
 using System.Net.Sockets;
+using System.Runtime.InteropServices;
 using System.Windows;
 using System.Windows.Controls;
 using System.Windows.Input;
@@ -10,8 +11,11 @@ using System.Windows.Media;
 using System.Windows.Media.Imaging;
 using System.Windows.Shapes;
 using System.Windows.Threading;
+using System.Windows.Interop;
 using Microsoft.Data.Sqlite;
 using Microsoft.Win32;
+using System.Security.Principal;
+using Path = System.IO.Path;
 using Vnc.Core;
 using Vnc.Infrastructure;
 using Vnc.Platform.Windows;
@@ -36,6 +40,11 @@ public partial class MainWindow : Window
     private bool _refreshingGroups;
     private bool _allowClose;
     private bool _isShuttingDown;
+    private DispatcherTimer? _serviceStatusTimer;
+    private System.Drawing.Icon? _trayIcon;
+    private HwndSource? _trayWindowSource;
+    private ContextMenu? _trayContextMenu;
+    private const int TrayCallbackMessage = 0x8001;
 
     public MainWindow()
     {
@@ -45,6 +54,8 @@ public partial class MainWindow : Window
         UpdateNavigationSelection(_currentPage);
         Loaded += MainWindow_Loaded;
         Closing += MainWindow_Closing;
+        Closed += MainWindow_Closed;
+        StateChanged += MainWindow_StateChanged;
         PreviewKeyDown += MainWindow_PreviewKeyDown;
         PreviewKeyUp += MainWindow_PreviewKeyUp;
     }
@@ -55,7 +66,12 @@ public partial class MainWindow : Window
         {
             await _store.InitializeAsync();
             _storeReady = true;
+            InitializeTrayIcon();
+            LoadServiceConfiguration();
             RefreshServiceStatus();
+            _serviceStatusTimer = new DispatcherTimer { Interval = TimeSpan.FromSeconds(5) };
+            _serviceStatusTimer.Tick += (_, _) => RefreshServiceStatus();
+            _serviceStatusTimer.Start();
             DatabaseStatus.Text = "Banco SQLite inicializado; senhas consentidas ficam no Windows Credential Manager.";
             var savedSort = await _store.GetPreferenceAsync("computer-sort");
             var sortItem = SortBox.Items.OfType<ComboBoxItem>().FirstOrDefault(item => Equals(item.Tag, savedSort));
@@ -1457,6 +1473,389 @@ public partial class MainWindow : Window
     {
         ServiceStatus.Text = WindowsServiceStatusProbe.GetDiagnostic();
     }
+
+    private void LoadServiceConfiguration()
+    {
+        try
+        {
+            var configuration = new ServiceConfigurationStore().LoadExisting();
+            ServiceSharingCheckBox.IsChecked = configuration.RemoteSharingEnabled;
+            ServiceBindAddressBox.Text = configuration.BindAddress;
+            ServicePortBox.Text = configuration.Port.ToString();
+            AgentAutoStartCheckBox.IsChecked = AgentStartupRegistration.IsEnabled();
+        }
+        catch (Exception exception) when (exception is IOException or UnauthorizedAccessException or System.Security.SecurityException or System.Text.Json.JsonException or InvalidDataException)
+        {
+            ServiceStatus.Text = $"Não foi possível ler a configuração segura: {exception.Message}";
+        }
+    }
+
+    private async void SaveServiceConfiguration_Click(object sender, RoutedEventArgs e)
+    {
+        if (!IPAddress.TryParse(ServiceBindAddressBox.Text.Trim(), out var bindAddress) ||
+            !ServiceConfiguration.IsAllowedBindAddress(bindAddress))
+        {
+            ServiceStatus.Text = "Use um IP explícito de loopback, LAN privada, VPN ou link-local. Endereços públicos não são permitidos.";
+            return;
+        }
+
+        if (!int.TryParse(ServicePortBox.Text, out var port) || port is < 1 or > 65535)
+        {
+            ServiceStatus.Text = "Informe uma porta TCP entre 1 e 65535.";
+            return;
+        }
+
+        var password = ServicePasswordBox.Password;
+        if (password.Length != 8 || password.Any(character => character > 0x7f))
+        {
+            ServiceStatus.Text = "A senha deve conter exatamente oito caracteres ASCII.";
+            return;
+        }
+
+        if (!IPAddress.IsLoopback(bindAddress) &&
+            MessageBox.Show(
+                this,
+                $"O LucyServer ficará disponível em {bindAddress}:{port}. VNC clássico não cifra o tráfego. Continue somente em uma rede confiável/VPN.",
+                "Confirmar configuração do LucyServer",
+                MessageBoxButton.YesNo,
+                MessageBoxImage.Warning) != MessageBoxResult.Yes)
+        {
+            return;
+        }
+
+        var agentPath = GetAgentExecutablePath();
+        var configuration = new ServiceConfiguration
+        {
+            RemoteSharingEnabled = ServiceSharingCheckBox.IsChecked == true,
+            BindAddress = bindAddress.ToString(),
+            Port = port,
+            AuthenticationRequired = true,
+            MaxSessions = 1,
+            AgentSid = WindowsIdentity.GetCurrent().User?.Value
+                ?? throw new InvalidOperationException("Could not resolve the current Windows user SID for the desktop Agent."),
+            AgentWorkerSid = new SecurityIdentifier(WellKnownSidType.LocalSystemSid, null).Value,
+        };
+
+        string? requestPath = null;
+        try
+        {
+            ServiceStatus.Text = "Solicitando elevação para proteger a configuração...";
+            requestPath = ServiceConfigurationProvisioner.WriteProtectedRequest(
+                new ServiceConfigurationRequest(configuration, password));
+            await RunElevatedConfigurationAsync(GetServiceExecutablePath(), requestPath);
+            var agentAutoStartEnabled = AgentAutoStartCheckBox.IsChecked == true;
+            AgentStartupRegistration.SetEnabled(agentAutoStartEnabled, agentPath);
+            if (agentAutoStartEnabled)
+            {
+                AgentStartupRegistration.StartNow(agentPath);
+            }
+
+            ServiceStatus.Text = configuration.RemoteSharingEnabled
+                ? agentAutoStartEnabled
+                    ? "Configuração protegida. Se o serviço já estava ativo, foi reiniciado; se estava parado, inicie-o para aplicar. O supervisor do Agent foi iniciado e registrado para este usuário."
+                    : "Configuração protegida. Se o serviço já estava ativo, foi reiniciado; se estava parado, inicie-o para aplicar. O serviço só poderá compartilhar quando um Agent interativo estiver ativo."
+                : "Compartilhamento desabilitado na configuração protegida. Se o serviço estava ativo, foi reiniciado; se estava parado, não há listener.";
+            ServicePasswordBox.Clear();
+            RefreshServiceStatus();
+        }
+        catch (Exception exception) when (exception is IOException or UnauthorizedAccessException or System.Security.SecurityException or System.Security.Cryptography.CryptographicException or System.ComponentModel.Win32Exception or InvalidOperationException or System.Text.Json.JsonException)
+        {
+            ServiceStatus.Text = $"Falha ao salvar/aplicar a configuração: {exception.Message}";
+            MessageBox.Show(
+                this,
+                $"{exception.Message}\n\nSe a falha ocorreu durante a reinicialização, a configuração pode já ter sido salva. Confira o estado do serviço; ele pode ainda estar usando a configuração anterior.",
+                "LucyServer",
+                MessageBoxButton.OK,
+                MessageBoxImage.Error);
+        }
+        finally
+        {
+            if (requestPath is not null)
+            {
+                ServiceConfigurationProvisioner.DeleteProtectedRequest(requestPath);
+            }
+
+            ServicePasswordBox.Clear();
+        }
+    }
+
+    private async Task RunElevatedConfigurationAsync(string serviceExecutablePath, string requestPath)
+    {
+        var startInfo = new ProcessStartInfo(serviceExecutablePath)
+        {
+            UseShellExecute = true,
+            Verb = "runas",
+            WorkingDirectory = Path.GetDirectoryName(serviceExecutablePath)!,
+        };
+        startInfo.ArgumentList.Add("--configure");
+        startInfo.ArgumentList.Add(requestPath);
+        using var process = Process.Start(startInfo)
+            ?? throw new InvalidOperationException("Could not start the elevated LucyServer configuration helper.");
+        await process.WaitForExitAsync();
+        if (process.ExitCode != 0)
+        {
+            throw new InvalidOperationException($"The elevated configuration helper exited with code {process.ExitCode}.");
+        }
+    }
+
+    private async void InstallService_Click(object sender, RoutedEventArgs e) =>
+        await RunServiceScriptFromUiAsync("Install-LucyServerService.ps1", "-ExecutablePath", GetServiceExecutablePath());
+
+    private async void StartService_Click(object sender, RoutedEventArgs e) =>
+        await RunServiceScriptFromUiAsync("Start-LucyServerService.ps1");
+
+    private async void StopService_Click(object sender, RoutedEventArgs e) =>
+        await RunServiceScriptFromUiAsync("Stop-LucyServerService.ps1");
+
+    private async void RestartService_Click(object sender, RoutedEventArgs e) =>
+        await RunServiceScriptFromUiAsync("Restart-LucyServerService.ps1");
+
+    private async void UninstallService_Click(object sender, RoutedEventArgs e)
+    {
+        if (MessageBox.Show(this, "Desinstalar o serviço LucyServer? A configuração e a senha protegida serão preservadas.", "Confirmar desinstalação",
+                MessageBoxButton.YesNo, MessageBoxImage.Warning) != MessageBoxResult.Yes)
+        {
+            return;
+        }
+
+        await RunServiceScriptFromUiAsync("Uninstall-LucyServerService.ps1");
+    }
+
+    private async Task RunServiceScriptFromUiAsync(string scriptName, params string[] arguments)
+    {
+        try
+        {
+            var scriptPath = GetServiceScriptPath(scriptName);
+            var startInfo = new ProcessStartInfo(GetPowerShellPath())
+            {
+                UseShellExecute = true,
+                Verb = "runas",
+                WorkingDirectory = Path.GetDirectoryName(scriptPath)!,
+            };
+            startInfo.ArgumentList.Add("-NoProfile");
+            startInfo.ArgumentList.Add("-ExecutionPolicy");
+            startInfo.ArgumentList.Add("Bypass");
+            startInfo.ArgumentList.Add("-File");
+            startInfo.ArgumentList.Add(scriptPath);
+            foreach (var argument in arguments)
+            {
+                startInfo.ArgumentList.Add(argument);
+            }
+
+            using var process = Process.Start(startInfo)
+                ?? throw new InvalidOperationException("Could not start the elevated LucyServer service operation.");
+            await process.WaitForExitAsync();
+            if (process.ExitCode != 0)
+            {
+                throw new InvalidOperationException($"The service management script exited with code {process.ExitCode}.");
+            }
+
+            RefreshServiceStatus();
+        }
+        catch (Exception exception) when (exception is IOException or UnauthorizedAccessException or System.Security.SecurityException or System.ComponentModel.Win32Exception or InvalidOperationException)
+        {
+            ServiceStatus.Text = $"Operação do serviço não concluída: {exception.Message}";
+        }
+    }
+
+    private static string GetPowerShellPath() =>
+        Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.System), "WindowsPowerShell", "v1.0", "powershell.exe");
+
+    private static string GetServiceExecutablePath() =>
+        ResolveLucyVncPath("Service", Path.Combine("Vnc.Service", "bin", "Release", "net8.0-windows", "Vnc.Service.exe"));
+
+    private static string GetAgentExecutablePath() =>
+        ResolveLucyVncPath("Agent", Path.Combine("Vnc.Agent", "bin", "Release", "net8.0-windows", "Vnc.Agent.exe"));
+
+    private static string GetServiceScriptPath(string scriptName)
+    {
+        var installedPath = Path.Combine(AppContext.BaseDirectory, "Scripts", scriptName);
+        if (File.Exists(installedPath))
+        {
+            return installedPath;
+        }
+
+        var repositoryRoot = FindRepositoryRoot()
+            ?? throw new FileNotFoundException("LucyVNC service management scripts were not found.", installedPath);
+        var repositoryPath = Path.Combine(repositoryRoot, "scripts", scriptName);
+        return File.Exists(repositoryPath)
+            ? repositoryPath
+            : throw new FileNotFoundException("LucyVNC service management script was not found.", repositoryPath);
+    }
+
+    private static string ResolveLucyVncPath(string installedSubdirectory, string repositoryRelativePath)
+    {
+        var installedPath = Path.Combine(AppContext.BaseDirectory, installedSubdirectory, Path.GetFileName(repositoryRelativePath));
+        if (File.Exists(installedPath))
+        {
+            return installedPath;
+        }
+
+        var repositoryRoot = FindRepositoryRoot()
+            ?? throw new FileNotFoundException($"LucyVNC {installedSubdirectory} executable was not found.", installedPath);
+        var repositoryPath = Path.Combine(repositoryRoot, "src", repositoryRelativePath);
+        return File.Exists(repositoryPath)
+            ? repositoryPath
+            : throw new FileNotFoundException($"LucyVNC {installedSubdirectory} executable was not found.", repositoryPath);
+    }
+
+    private static string? FindRepositoryRoot()
+    {
+        for (var directory = new DirectoryInfo(AppContext.BaseDirectory); directory is not null; directory = directory.Parent)
+        {
+            if (File.Exists(Path.Combine(directory.FullName, "LucyVNC.slnx")))
+            {
+                return directory.FullName;
+            }
+        }
+
+        return null;
+    }
+
+    private void InitializeTrayIcon()
+    {
+        if (_trayIcon is not null)
+        {
+            return;
+        }
+
+        var executable = Environment.ProcessPath
+            ?? throw new InvalidOperationException("Could not resolve the LucyViewer executable path for the notification area.");
+        var icon = System.Drawing.Icon.ExtractAssociatedIcon(executable)
+            ?? throw new InvalidOperationException("Could not load the LucyVNC application icon.");
+        _trayIcon = icon;
+        var windowHandle = new WindowInteropHelper(this).Handle;
+        _trayWindowSource = HwndSource.FromHwnd(windowHandle)
+            ?? throw new InvalidOperationException("Could not register the LucyVNC notification-area message handler.");
+        _trayWindowSource.AddHook(TrayWindowProc);
+        _trayContextMenu = new ContextMenu();
+        var showItem = new MenuItem { Header = "Abrir LucyVNC" };
+        showItem.Click += (_, _) => RestoreFromTray();
+        _trayContextMenu.Items.Add(showItem);
+        _trayContextMenu.Items.Add(new Separator());
+        var exitItem = new MenuItem { Header = "Sair" };
+        exitItem.Click += async (_, _) => await ShutdownAsync();
+        _trayContextMenu.Items.Add(exitItem);
+
+        var data = new NotifyIconData
+        {
+            Size = (uint)Marshal.SizeOf<NotifyIconData>(),
+            WindowHandle = windowHandle,
+            Id = 1,
+            Flags = 0x1 | 0x2 | 0x4,
+            CallbackMessage = TrayCallbackMessage,
+            IconHandle = icon.Handle,
+            Tooltip = "LucyVNC",
+        };
+        if (!Shell_NotifyIcon(0, ref data))
+        {
+            _trayContextMenu = null;
+            _trayWindowSource.RemoveHook(TrayWindowProc);
+            _trayWindowSource = null;
+            _trayIcon.Dispose();
+            _trayIcon = null;
+            throw new System.ComponentModel.Win32Exception(Marshal.GetLastWin32Error(), "Could not add the LucyVNC icon to the notification area.");
+        }
+    }
+
+    private IntPtr TrayWindowProc(IntPtr windowHandle, int message, IntPtr wParam, IntPtr lParam, ref bool handled)
+    {
+        if (message != TrayCallbackMessage)
+        {
+            return IntPtr.Zero;
+        }
+
+        var notification = unchecked((int)lParam);
+        if (notification == 0x0203)
+        {
+            RestoreFromTray();
+            handled = true;
+        }
+        else if (notification == 0x0205)
+        {
+            ShowTrayContextMenu();
+            handled = true;
+        }
+
+        return IntPtr.Zero;
+    }
+
+    private void ShowTrayContextMenu()
+    {
+        if (_trayContextMenu is null)
+        {
+            return;
+        }
+
+        _trayContextMenu.PlacementTarget = this;
+        _trayContextMenu.Placement = System.Windows.Controls.Primitives.PlacementMode.MousePoint;
+        _trayContextMenu.IsOpen = true;
+    }
+
+    private void RestoreFromTray()
+    {
+        Show();
+        WindowState = WindowState.Normal;
+        Activate();
+    }
+
+    private void MainWindow_StateChanged(object? sender, EventArgs e)
+    {
+        if (WindowState == WindowState.Minimized && _trayIcon is not null)
+        {
+            Hide();
+        }
+    }
+
+    private void MainWindow_Closed(object? sender, EventArgs e)
+    {
+        _serviceStatusTimer?.Stop();
+        if (_trayIcon is not null)
+        {
+            var data = new NotifyIconData
+            {
+                Size = (uint)Marshal.SizeOf<NotifyIconData>(),
+                WindowHandle = new WindowInteropHelper(this).Handle,
+                Id = 1,
+                Tooltip = string.Empty,
+                Info = string.Empty,
+                InfoTitle = string.Empty,
+            };
+            _ = Shell_NotifyIcon(2, ref data);
+            _trayWindowSource?.RemoveHook(TrayWindowProc);
+            _trayContextMenu = null;
+            _trayIcon.Dispose();
+            _trayIcon = null;
+            _trayWindowSource = null;
+        }
+    }
+
+    [System.Runtime.InteropServices.StructLayout(System.Runtime.InteropServices.LayoutKind.Sequential, CharSet = System.Runtime.InteropServices.CharSet.Unicode)]
+    private struct NotifyIconData
+    {
+        public uint Size;
+        public IntPtr WindowHandle;
+        public uint Id;
+        public uint Flags;
+        public uint CallbackMessage;
+        public IntPtr IconHandle;
+        [System.Runtime.InteropServices.MarshalAs(System.Runtime.InteropServices.UnmanagedType.ByValTStr, SizeConst = 128)]
+        public string? Tooltip;
+        public uint State;
+        public uint StateMask;
+        [System.Runtime.InteropServices.MarshalAs(System.Runtime.InteropServices.UnmanagedType.ByValTStr, SizeConst = 256)]
+        public string? Info;
+        public uint TimeoutOrVersion;
+        [System.Runtime.InteropServices.MarshalAs(System.Runtime.InteropServices.UnmanagedType.ByValTStr, SizeConst = 64)]
+        public string? InfoTitle;
+        public uint InfoFlags;
+        public Guid ItemGuid;
+        public IntPtr BalloonIcon;
+    }
+
+    [System.Runtime.InteropServices.DllImport("shell32.dll", CharSet = System.Runtime.InteropServices.CharSet.Unicode, SetLastError = true)]
+    [return: System.Runtime.InteropServices.MarshalAs(System.Runtime.InteropServices.UnmanagedType.Bool)]
+    private static extern bool Shell_NotifyIcon(uint message, ref NotifyIconData data);
 
     private async void StopServer_Click(object sender, RoutedEventArgs e)
     {

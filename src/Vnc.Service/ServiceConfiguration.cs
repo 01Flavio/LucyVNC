@@ -1,4 +1,5 @@
 using System.Net;
+using System.Security.Principal;
 
 namespace Vnc.Service;
 
@@ -9,6 +10,8 @@ public sealed record ServiceConfiguration
     public int Port { get; init; } = 5901;
     public bool AuthenticationRequired { get; init; } = true;
     public int MaxSessions { get; init; } = 1;
+    public string AgentSid { get; init; } = string.Empty;
+    public string AgentWorkerSid { get; init; } = string.Empty;
 
     public static ServiceConfiguration SafeDefaults { get; } = new();
 
@@ -32,6 +35,16 @@ public sealed record ServiceConfiguration
         if (MaxSessions != 1)
         {
             throw new InvalidDataException("The service supports at most one remote session.");
+        }
+
+        if (!string.IsNullOrWhiteSpace(AgentSid))
+        {
+            _ = new SecurityIdentifier(AgentSid);
+        }
+
+        if (!string.IsNullOrWhiteSpace(AgentWorkerSid))
+        {
+            _ = new SecurityIdentifier(AgentWorkerSid);
         }
     }
 

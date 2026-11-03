@@ -150,6 +150,6 @@ Publicados Manager, Worker, Agent e Server UI self-contained `win-x64`. Inno Set
 
 Captura real/GDI e RFB foram testados no monitor atual a 144 DPI (150%): dimensões 1920×1080 e um Raw completo de 8.294.400 bytes chegou ao Viewer local. O frame não foi salvo nem visualizado. As escalas 100%, 125%, 175% e 200% não foram testadas individualmente. TightVNC Viewer real, SendInput físico e o Worker/Agent via serviço SCM não foram testados nesta alteração.
 
-Commits locais: implementação `pendente`; handoff final será separado. Worktree deve ser verificado limpo após commit; sem push e sem operações sobre os serviços/processos existentes.
+Commit local de implementação: `a6317a2` (`fix: enable per-monitor DPI capture for LucyVNC Server`). Este ajuste final do handoff será commitado separadamente; sem push e sem operações sobre os serviços/processos existentes.
 
 Arquivos alterados: `src/Vnc.Platform.Windows/LucyVNC.Dpi.manifest`, `WindowsDpiAwareness.cs`, `ScreenCapture.cs`, `InputInjection.cs`; `src/Vnc.Agent/Program.cs`, `Vnc.Agent.csproj`; `src/Vnc.Service/Program.cs`, `Vnc.Service.csproj`; `src/Vnc.Tray/Program.cs`, `Vnc.Tray.csproj`; `tests/Vnc.Agent.Tests/LucySessionAgentTests.cs`, `tests/Vnc.Server.Tests/UnitTest1.cs`, `tests/Vnc.Service.Tests/ComponentSeparationTests.cs`, `tests/Vnc.ProcessHost/Program.cs`, `Vnc.ProcessHost.csproj`, `tests/Vnc.Integration.Tests/UnitTest1.cs`; `installer/LucyVNC.iss`; `docs/CODEX_HANDOFF.md`.

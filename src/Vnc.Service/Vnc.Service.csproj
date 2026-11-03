@@ -6,7 +6,6 @@
     <TargetFramework>net8.0-windows</TargetFramework>
     <ImplicitUsings>enable</ImplicitUsings>
     <Nullable>enable</Nullable>
-    <ApplicationManifest>..\Vnc.Platform.Windows\LucyVNC.Dpi.manifest</ApplicationManifest>
   </PropertyGroup>
 
   <ItemGroup>

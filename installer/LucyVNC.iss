@@ -1,5 +1,5 @@
 #define AppName "LucyVNC Setup"
-#define AppVersion "2.4.4"
+#define AppVersion "2.4.5"
 #define AppPublisher "01Flavio"
 
 [Setup]

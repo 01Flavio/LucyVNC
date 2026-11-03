@@ -5,7 +5,6 @@ using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Logging;
 using Vnc.Core;
-using Vnc.Platform.Windows;
 
 namespace Vnc.Service;
 
@@ -13,7 +12,6 @@ internal static class Program
 {
     public static Task Main(string[] args)
     {
-        WindowsDpiAwareness.InitializePerMonitorV2();
         if (args.Length == 2 && string.Equals(args[0], "--configure", StringComparison.OrdinalIgnoreCase))
         {
             var serviceRestarted = ServiceConfigurationProvisioner.ApplyProtectedRequest(args[1]);

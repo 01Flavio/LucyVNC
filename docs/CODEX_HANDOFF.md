@@ -153,3 +153,25 @@ Captura real/GDI e RFB foram testados no monitor atual a 144 DPI (150%): dimens�
 Commit local de implementação: `a6317a2` (`fix: enable per-monitor DPI capture for LucyVNC Server`). Este ajuste final do handoff será commitado separadamente; sem push e sem operações sobre os serviços/processos existentes.
 
 Arquivos alterados: `src/Vnc.Platform.Windows/LucyVNC.Dpi.manifest`, `WindowsDpiAwareness.cs`, `ScreenCapture.cs`, `InputInjection.cs`; `src/Vnc.Agent/Program.cs`, `Vnc.Agent.csproj`; `src/Vnc.Service/Program.cs`, `Vnc.Service.csproj`; `src/Vnc.Tray/Program.cs`, `Vnc.Tray.csproj`; `tests/Vnc.Agent.Tests/LucySessionAgentTests.cs`, `tests/Vnc.Server.Tests/UnitTest1.cs`, `tests/Vnc.Service.Tests/ComponentSeparationTests.cs`, `tests/Vnc.ProcessHost/Program.cs`, `Vnc.ProcessHost.csproj`, `tests/Vnc.Integration.Tests/UnitTest1.cs`; `installer/LucyVNC.iss`; `docs/CODEX_HANDOFF.md`.
+
+## LucyVNC 2.4.5 — falha de inicialização do Worker (em andamento)
+
+### Objetivo
+Remover do Windows Service qualquer configuração gráfica DPI que cause falha no startup; preservar PMv2 no Agent, captura em 150%, configuração 0.0.0.0:5900 e produzir Setup 2.4.5. Avaliar transferência do Viewer sem implementar transporte inseguro.
+
+### Causa confirmada
+- O Worker recebeu o manifesto do Agent (PMv2) e chamava `SetProcessDpiAwarenessContext` antes de iniciar o Host. O serviço não usa APIs gráficas; em contexto de serviço a chamada não é necessária e pode retornar acesso negado, abortando `Main`.
+- Corrigir removendo chamada DPI e manifesto apenas do Worker. O Agent continua sendo o dono da captura interativa e mantém PMv2.
+
+### Transferência Viewer
+- Inspeção inicial: Viewer usa conexão TCP/RFB convencional; autenticação VNC clássica não cifra o fluxo. Não existe `SslStream`, negociação TLS ou canal seguro de transferência no caminho Viewer/Server. Não enviar comandos de arquivo no fluxo RFB sem negociação e proteção autenticada, nem desenhar botão que aparente funcionalidade inexistente.
+- Transferência permanecerá pendente/desabilitada nesta entrega; não foi iniciada implementação UI insegura. Próxima etapa precisará de negociação LucyVNC explícita e canal criptografado autenticado, ou uma arquitetura segura aprovada.
+
+### Marco A concluído
+- Removido do Worker `WindowsDpiAwareness.InitializePerMonitorV2()` e removido do `Vnc.Service.csproj` o manifesto DPI. O entry point segue direto para configuração/host e não inicializa User32 DPI.
+- O manifesto PMv2 permanece aplicado ao Agent; `GdiScreenCapture` continua a exigir DPI awareness e obter bounds físicos, sem multiplicadores.
+- Testes passaram: regressão de configuração Worker/Agent 1 teste; processo Worker+Agent+Viewer loopback 1 teste; captura Full HD IPC Agent 1 teste.
+- Primeira tentativa paralela de testes disputou arquivo intermediário `Vnc.Core.dll` com Microsoft Defender (CS2012); repetição sequencial passou (2/2). Sem alteração de timeout.
+
+### Próxima ação exata
+Executar restore/build Release e testes completos; publicar componentes self-contained `win-x64`, compilar Setup 2.4.5 usando o ISCC explícito, verificar artefato/hash e criar commits locais. A transferência segura permanece pendente; não adicionar botão até haver canal negociado e autenticado.

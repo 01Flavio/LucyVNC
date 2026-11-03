@@ -125,9 +125,7 @@ public sealed class ComponentSeparationTests
         var setup = File.ReadAllText(Path.Combine(root, "installer", "LucyVNC.iss"));
         Assert.Contains("#define AppVersion \"2.4.4\"", setup, StringComparison.Ordinal);
         var serviceProject = XDocument.Load(Path.Combine(root, "src", "Vnc.Service", "Vnc.Service.csproj"));
-        Assert.Contains(
-            serviceProject.Descendants("ApplicationManifest"),
-            element => element.Value == @"..\Vnc.Platform.Windows\LucyVNC.Dpi.manifest");
+        Assert.Empty(serviceProject.Descendants("ApplicationManifest"));
         foreach (var projectName in new[] { "Vnc.Agent", "Vnc.Tray" })
         {
             var project = XDocument.Load(Path.Combine(root, "src", projectName, $"{projectName}.csproj"));
@@ -141,8 +139,7 @@ public sealed class ComponentSeparationTests
         Assert.True(trayEntryPoint.IndexOf("WindowsDpiAwareness.InitializePerMonitorV2();", StringComparison.Ordinal) <
                     trayEntryPoint.IndexOf("ApplicationConfiguration.Initialize();", StringComparison.Ordinal));
         var serviceEntryPoint = File.ReadAllText(Path.Combine(root, "src", "Vnc.Service", "Program.cs"));
-        Assert.True(serviceEntryPoint.IndexOf("WindowsDpiAwareness.InitializePerMonitorV2();", StringComparison.Ordinal) <
-                    serviceEntryPoint.IndexOf("ServiceHostBuilder.Create(args)", StringComparison.Ordinal));
+        Assert.DoesNotContain("WindowsDpiAwareness", serviceEntryPoint, StringComparison.Ordinal);
     }
 
     private static string FindRepositoryRoot()

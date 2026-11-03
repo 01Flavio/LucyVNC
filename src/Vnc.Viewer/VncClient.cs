@@ -234,18 +234,28 @@ public sealed class VncViewerSession : IAsyncDisposable
 
     public async Task DisconnectAsync()
     {
-        await _disconnectLock.WaitAsync().ConfigureAwait(false);
+        if (!await _disconnectLock.WaitAsync(TimeSpan.FromSeconds(5)).ConfigureAwait(false))
+        {
+            throw new TimeoutException("Timed out waiting for another Viewer disconnect operation.");
+        }
+
         try
         {
             _sessionCancellation?.Cancel();
             if (_stream is not null)
             {
+                using var releaseTimeout = new CancellationTokenSource(TimeSpan.FromSeconds(2));
                 try
                 {
-                    await ReleaseAllInputAsync(CancellationToken.None).ConfigureAwait(false);
+                    await ReleaseAllInputAsync(releaseTimeout.Token).ConfigureAwait(false);
                 }
-                catch (IOException)
+                catch (Exception exception) when (
+                    exception is IOException or
+                    OperationCanceledException or
+                    ObjectDisposedException or
+                    InvalidOperationException)
                 {
+                    StatusChanged?.Invoke(this, "Remote input release did not complete before disconnect.");
                 }
             }
 

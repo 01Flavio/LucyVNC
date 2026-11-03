@@ -4,6 +4,10 @@ using System.Windows.Controls;
 using System.Windows.Media;
 using System.Windows.Threading;
 using Vnc.App;
+using Vnc.Core;
+using Vnc.Platform.Windows;
+using Vnc.Server;
+using Vnc.Viewer;
 
 namespace Vnc.Infrastructure.Tests;
 
@@ -189,6 +193,217 @@ public sealed class RemoteWorkspaceLifecycleTests
         Assert.Contains("new Action(() => _ = ConfirmCloseAsync())", workspaceSource, StringComparison.Ordinal);
         Assert.Contains("if (!HasSessions)", workspaceSource, StringComparison.Ordinal);
         Assert.Contains("if (_allowClose || _isClosed)", workspaceSource, StringComparison.Ordinal);
+        Assert.Contains("state.RenderQueue.Dispose();", managerSource, StringComparison.Ordinal);
+        Assert.Contains("DispatcherPriority.Background", managerSource, StringComparison.Ordinal);
+        Assert.Contains("AskToSaveComputer(state.Host, state.Port)", managerSource, StringComparison.Ordinal);
+        Assert.DoesNotContain(".Wait(", managerSource, StringComparison.Ordinal);
+        Assert.DoesNotContain(".Result", managerSource, StringComparison.Ordinal);
+        Assert.DoesNotContain("GetAwaiter().GetResult", managerSource, StringComparison.Ordinal);
+        Assert.DoesNotContain("Dispatcher.Invoke(", managerSource, StringComparison.Ordinal);
+    }
+
+    [Theory]
+    [InlineData("Sim", true)]
+    [InlineData("Não", false)]
+    public async Task SaveComputerPromptRespondsWhileFramebufferUpdatesAreCoalesced(string buttonText, bool expectedYes)
+    {
+        var manager = await _fixture.InvokeAsync(() =>
+        {
+            var window = new Window { Title = "Test owner" };
+            window.Show();
+            return window;
+        });
+        var renderCount = 0;
+        var renderedDuringDialog = false;
+        FramebufferRenderUpdate? lastUpdate = null;
+        var queue = await _fixture.InvokeAsync(() => new FramebufferRenderQueue(
+            Dispatcher.CurrentDispatcher,
+            update =>
+            {
+                Interlocked.Increment(ref renderCount);
+                renderedDuringDialog = Application.Current.Windows
+                    .OfType<Window>()
+                    .Any(window => window.Title == "Salvar computador" && window.IsVisible);
+                lastUpdate = update;
+            },
+            exception => throw exception));
+
+        _fixture.ClickDialogButtonWhenShown(
+            "Salvar computador",
+            buttonText,
+            () =>
+            {
+                for (var index = 0; index < 250; index++)
+                {
+                    var value = (byte)index;
+                    queue.Enqueue(new FramebufferUpdatedEventArgs(
+                        8,
+                        8,
+                        [new FramebufferRectangle(
+                            (ushort)(index % 8),
+                            (ushort)(index / 8 % 8),
+                            1,
+                            1,
+                            0,
+                            [value, value, value, 0])]));
+                }
+            },
+            TimeSpan.FromMilliseconds(50));
+
+        var result = await _fixture.InvokeAsync(() =>
+            LucyDialog.Show(
+                manager,
+                "Conexão autenticada com 127.0.0.1:5901. Salvar como computador conhecido?",
+                "Salvar computador",
+                MessageBoxButton.YesNo,
+                MessageBoxImage.Question));
+
+        Assert.Equal(expectedYes ? MessageBoxResult.Yes : MessageBoxResult.No, result);
+        Assert.True(renderedDuringDialog);
+        Assert.Equal(1, renderCount);
+        Assert.NotNull(lastUpdate);
+        Assert.Equal((byte)249, lastUpdate!.Pixels[((7 * 8) + 1) * 4]);
+        queue.Dispose();
+        await _fixture.InvokeAsync(manager.Close);
+    }
+
+    [Fact]
+    public async Task ClosingWorkspaceDisposesQueuedFramebufferWork()
+    {
+        var manager = await _fixture.InvokeAsync(() => new MainWindow());
+        var (workspace, closed) = await CreateWorkspaceAsync(manager);
+        await AddSessionAsync(workspace, "render-pending");
+        var rendered = 0;
+        var queue = await _fixture.InvokeAsync(() => new FramebufferRenderQueue(
+            Dispatcher.CurrentDispatcher,
+            _ => Interlocked.Increment(ref rendered),
+            exception => throw exception));
+
+        await _fixture.InvokeAsync(() =>
+        {
+            queue.Enqueue(new FramebufferUpdatedEventArgs(
+                2,
+                2,
+                [new FramebufferRectangle(0, 0, 2, 2, 0, new byte[16])]));
+            queue.Dispose();
+            workspace.RemoveSession((TabItem)workspace.Tabs.Items[0]);
+        });
+
+        await closed.WaitAsync(TimeSpan.FromSeconds(5));
+        await Task.Delay(100);
+        Assert.Equal(0, rendered);
+    }
+
+    [Fact]
+    public async Task AuthenticatedViewerKeepsDeliveringFramesWhileSaveComputerPromptIsOpen()
+    {
+        var manager = await _fixture.InvokeAsync(() => new MainWindow());
+        var promptMethod = typeof(MainWindow).GetMethod(
+            "AskToSaveComputer",
+            BindingFlags.Instance | BindingFlags.NonPublic)!;
+        var renderedDuringDialog = 0;
+        var queue = await _fixture.InvokeAsync(() => new FramebufferRenderQueue(
+            Dispatcher.CurrentDispatcher,
+            _ =>
+            {
+                if (Application.Current.Windows
+                    .OfType<Window>()
+                    .Any(window => window.Title == "Salvar computador" && window.IsVisible))
+                {
+                    Interlocked.Increment(ref renderedDuringDialog);
+                }
+            },
+            exception => throw exception));
+        using var server = new VncServer(
+            new ConnectionSettings
+            {
+                Port = 0,
+                BindAddress = "127.0.0.1",
+                Password = "testpass",
+                Width = 32,
+                Height = 24,
+            },
+            new WpfUiFixture.ChangingScreenCapture());
+        server.Start();
+
+        await using var viewer = new VncViewerSession(new ConnectionSettings
+        {
+            Host = "127.0.0.1",
+            Port = server.BoundPort,
+            Password = "testpass",
+        });
+        var firstFrame = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        viewer.FramebufferUpdated += (_, update) =>
+        {
+            queue.Enqueue(update);
+            firstFrame.TrySetResult();
+        };
+        await viewer.ConnectAsync().WaitAsync(TimeSpan.FromSeconds(5));
+        using var cancellation = new CancellationTokenSource();
+        var runTask = viewer.RunAsync(cancellation.Token);
+        await firstFrame.Task.WaitAsync(TimeSpan.FromSeconds(5));
+
+        _fixture.ClickDialogButtonWhenShown(
+            "Salvar computador",
+            "Sim",
+            delayBeforeClick: TimeSpan.FromMilliseconds(350));
+        var result = await _fixture.InvokeAsync(() =>
+            (MessageBoxResult)promptMethod.Invoke(manager, ["127.0.0.1", server.BoundPort])!);
+
+        Assert.Equal(MessageBoxResult.Yes, result);
+        Assert.True(renderedDuringDialog > 0);
+        Assert.True(viewer.IsConnected);
+        cancellation.Cancel();
+        await viewer.DisconnectAsync().WaitAsync(TimeSpan.FromSeconds(5));
+        await runTask.WaitAsync(TimeSpan.FromSeconds(5));
+        queue.Dispose();
+    }
+
+    [Fact]
+    public async Task DelayedFramebufferRenderCoalescesFramesThatArriveDuringRendering()
+    {
+        using var releaseFirstRender = new ManualResetEventSlim();
+        var firstRenderStarted = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var secondRenderCompleted = new TaskCompletionSource<FramebufferRenderUpdate>(TaskCreationOptions.RunContinuationsAsynchronously);
+        var renderCount = 0;
+        var queue = await _fixture.InvokeAsync(() => new FramebufferRenderQueue(
+            Dispatcher.CurrentDispatcher,
+            update =>
+            {
+                if (Interlocked.Increment(ref renderCount) == 1)
+                {
+                    firstRenderStarted.TrySetResult();
+                    if (!releaseFirstRender.Wait(TimeSpan.FromSeconds(5)))
+                    {
+                        throw new TimeoutException("Test did not release its first render.");
+                    }
+                }
+                else
+                {
+                    secondRenderCompleted.TrySetResult(update);
+                }
+            },
+            exception => throw exception));
+
+        await _fixture.InvokeAsync(() => queue.Enqueue(new FramebufferUpdatedEventArgs(
+            4,
+            4,
+            [new FramebufferRectangle(0, 0, 4, 4, 0, new byte[64])])));
+        await firstRenderStarted.Task.WaitAsync(TimeSpan.FromSeconds(5));
+        for (var index = 0; index < 200; index++)
+        {
+            var value = (byte)index;
+            queue.Enqueue(new FramebufferUpdatedEventArgs(
+                4,
+                4,
+                [new FramebufferRectangle(1, 1, 1, 1, 0, [value, value, value, 0])]));
+        }
+
+        releaseFirstRender.Set();
+        var finalUpdate = await secondRenderCompleted.Task.WaitAsync(TimeSpan.FromSeconds(5));
+        Assert.Equal(2, renderCount);
+        Assert.Equal((byte)199, finalUpdate.Pixels[0]);
+        queue.Dispose();
     }
 
     private async Task<(RemoteWorkspaceWindow Workspace, Task Closed)> CreateWorkspaceAsync(MainWindow manager)
@@ -271,14 +486,21 @@ public sealed class WpfUiFixture : IDisposable
             return true;
         });
 
-    public void ClickDialogButtonWhenShown(string buttonText)
+    public void ClickDialogButtonWhenShown(string buttonText) =>
+        ClickDialogButtonWhenShown("Encerrar sessões remotas", buttonText);
+
+    public void ClickDialogButtonWhenShown(
+        string dialogTitle,
+        string buttonText,
+        Action? beforeClick = null,
+        TimeSpan? delayBeforeClick = null)
     {
         var dispatcher = _dispatcherReady.Task.GetAwaiter().GetResult();
         var timer = new DispatcherTimer(TimeSpan.FromMilliseconds(50), DispatcherPriority.Background, (sender, _) =>
         {
             var dialog = _application!.Windows
                 .OfType<Window>()
-                .FirstOrDefault(window => string.Equals(window.Title, "Encerrar sessões remotas", StringComparison.Ordinal));
+                .FirstOrDefault(window => string.Equals(window.Title, dialogTitle, StringComparison.Ordinal));
             if (dialog is null)
             {
                 return;
@@ -292,9 +514,44 @@ public sealed class WpfUiFixture : IDisposable
             }
 
             ((DispatcherTimer)sender!).Stop();
-            button.RaiseEvent(new RoutedEventArgs(Button.ClickEvent, button));
+            beforeClick?.Invoke();
+            if (delayBeforeClick is { } delay && delay > TimeSpan.Zero)
+            {
+                var delayedClick = new DispatcherTimer(delay, DispatcherPriority.Background, (clickSender, _) =>
+                {
+                    ((DispatcherTimer)clickSender!).Stop();
+                    button.RaiseEvent(new RoutedEventArgs(Button.ClickEvent, button));
+                }, dispatcher);
+                delayedClick.Start();
+            }
+            else
+            {
+                dispatcher.BeginInvoke(
+                    DispatcherPriority.Background,
+                    new Action(() => button.RaiseEvent(new RoutedEventArgs(Button.ClickEvent, button))));
+            }
         }, dispatcher);
         timer.Start();
+    }
+
+    internal sealed class ChangingScreenCapture : IScreenCapture
+    {
+        private int _captureCount;
+
+        public ScreenFrame CapturePrimaryScreen(int width = 0, int height = 0)
+        {
+            var frame = new ScreenFrame(
+                width == 0 ? 32 : width,
+                height == 0 ? 24 : height,
+                Vnc.Core.PixelFormat.Standard32Argb8888);
+            frame.Fill(30, 60, 90);
+            frame.PixelData[0] = (byte)Interlocked.Increment(ref _captureCount);
+            return frame;
+        }
+
+        public void Dispose()
+        {
+        }
     }
 
     public void Dispose()

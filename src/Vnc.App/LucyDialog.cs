@@ -18,13 +18,14 @@ internal static class LucyDialog
         var dialog = new Window
         {
             Title = caption,
-            Owner = owner,
             Width = 480,
             MinWidth = 390,
             MaxWidth = 560,
             MaxHeight = 520,
             SizeToContent = SizeToContent.Height,
-            WindowStartupLocation = WindowStartupLocation.CenterOwner,
+            WindowStartupLocation = owner.IsVisible
+                ? WindowStartupLocation.CenterOwner
+                : WindowStartupLocation.CenterScreen,
             ResizeMode = ResizeMode.NoResize,
             ShowInTaskbar = false,
             Background = Brush("Canvas"),
@@ -33,6 +34,11 @@ internal static class LucyDialog
             WindowStyle = WindowStyle.SingleBorderWindow,
         };
         dialog.Icon = owner.Icon;
+        if (owner.IsVisible)
+        {
+            dialog.Owner = owner;
+        }
+
         DarkWindowChrome.Apply(dialog);
 
         var root = new Grid { Margin = new Thickness(22) };

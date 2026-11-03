@@ -73,6 +73,24 @@ public partial class MainWindow : Window
         }
     }
 
+    private MessageBoxResult AskToSaveComputer(string host, int port)
+    {
+        UiDiagnostics.Write("Save-computer dialog opening");
+        try
+        {
+            return LucyDialog.Show(
+                this,
+                $"Conexão autenticada com {host}:{port}. Salvar como computador conhecido?",
+                "Salvar computador",
+                MessageBoxButton.YesNo,
+                MessageBoxImage.Question);
+        }
+        finally
+        {
+            UiDiagnostics.Write("Save-computer dialog closed");
+        }
+    }
+
     private async void Navigate_Click(object sender, RoutedEventArgs e)
     {
         if (sender is not Button { Tag: string page })
@@ -680,12 +698,15 @@ public partial class MainWindow : Window
                     var init = await session.ConnectAsync();
                     state.StartedUtc = DateTimeOffset.UtcNow;
                     state.CreateWorkspace(init.Width, init.Height);
+                    UiDiagnostics.Write("Connection authenticated", $"framebuffer={init.Width}x{init.Height}");
                     _sessions.Add(state.Id, state);
                     state.IsConnected = true;
                     OpenSessionInWorkspace(state);
                     state.SetStatus($"Autenticado em {init.DesktopName} ({init.Width}x{init.Height}) em {timer.ElapsedMilliseconds} ms.");
                     session.FramebufferUpdated += (_, args) => RenderFramebuffer(state, args);
-                    session.StatusChanged += (_, message) => Dispatcher.BeginInvoke(() => state.SetStatus(message));
+                    session.StatusChanged += (_, message) => Dispatcher.BeginInvoke(
+                        DispatcherPriority.Background,
+                        new Action(() => state.SetStatus(message)));
                     state.RunTask = MonitorViewerSessionAsync(state);
                     await TrackAuthenticatedConnectionAsync(state);
                     if (rememberPassword)
@@ -765,10 +786,12 @@ public partial class MainWindow : Window
         }
         catch (Exception exception)
         {
+            UiDiagnostics.Write("Viewer receive loop failed", exception.GetType().Name);
             _ = Dispatcher.BeginInvoke(() => state.SetStatus($"Sessão encerrada por erro: {exception.Message}"));
         }
         finally
         {
+            UiDiagnostics.Write("Viewer session ended");
             _ = Dispatcher.BeginInvoke(() => OnSessionDisconnected(state));
         }
     }
@@ -777,6 +800,7 @@ public partial class MainWindow : Window
     {
         if (_workspace is null || !_workspace.CanAcceptSessions)
         {
+            UiDiagnostics.Write("Creating Remote Workspace");
             _workspace = new RemoteWorkspaceWindow(this) { Owner = this };
         }
 
@@ -792,30 +816,7 @@ public partial class MainWindow : Window
 
     private void RenderFramebuffer(ViewerTabState state, FramebufferUpdatedEventArgs e)
     {
-        Dispatcher.BeginInvoke(() =>
-        {
-            if (!_sessions.ContainsKey(state.Id) || state.Bitmap is null)
-            {
-                return;
-            }
-
-            if (state.Bitmap.PixelWidth != e.Width || state.Bitmap.PixelHeight != e.Height)
-            {
-                state.Bitmap = new WriteableBitmap(e.Width, e.Height, 96, 96, PixelFormats.Bgr32, null);
-                state.RemoteImage.Source = state.Bitmap;
-            }
-
-            foreach (var rectangle in e.Rectangles)
-            {
-                state.Bitmap.WritePixels(
-                    new Int32Rect(rectangle.X, rectangle.Y, rectangle.Width, rectangle.Height),
-                    rectangle.Data,
-                    rectangle.Width * 4,
-                    0);
-            }
-
-            state.RecordFrame();
-        });
+        state.RenderQueue.Enqueue(e);
     }
 
     private Task CloseSessionAsync(ViewerTabState state, bool removeTab)
@@ -825,6 +826,7 @@ public partial class MainWindow : Window
             return state.CloseTask;
         }
 
+        UiDiagnostics.Write("Disconnect requested", $"endpoint-port={state.Port}");
         state.IsClosing = true;
         state.CloseTask = CloseSessionCoreAsync(state, removeTab);
         return state.CloseTask;
@@ -834,28 +836,35 @@ public partial class MainWindow : Window
     {
         state.PointerTimer.Stop();
         state.Cancellation.Cancel();
+        state.RenderQueue.Dispose();
         var wasConnected = state.Session.IsConnected;
         try
         {
-            if (state.Session.IsConnected)
-            {
-                await state.Session.ReleaseAllInputAsync();
-                await state.Session.DisconnectAsync();
-            }
+            await state.Session.DisconnectAsync();
 
             if (state.RunTask is not null)
             {
                 try
                 {
-                    await state.RunTask;
+                    await state.RunTask.WaitAsync(TimeSpan.FromSeconds(5));
                 }
-                catch (Exception exception)
+                catch (Exception exception) when (exception is not TimeoutException)
                 {
                     state.SetStatus($"Sessão encerrada: {exception.Message}");
                 }
+                catch (TimeoutException exception)
+                {
+                    UiDiagnostics.Write("Viewer receive loop did not stop within the shutdown bound", exception.Message);
+                    state.SetStatus("A leitura da sessão não encerrou no prazo; a conexão foi liberada.");
+                }
             }
         }
-        catch (Exception exception) when (exception is IOException or ObjectDisposedException or OperationCanceledException or InvalidOperationException)
+        catch (Exception exception) when (
+            exception is IOException or
+            ObjectDisposedException or
+            OperationCanceledException or
+            InvalidOperationException or
+            TimeoutException)
         {
             state.SetStatus($"Desconexão: {exception.Message}");
         }
@@ -879,6 +888,7 @@ public partial class MainWindow : Window
             try
             {
                 await state.Session.DisposeAsync();
+                UiDiagnostics.Write("Session resources released", $"endpoint-port={state.Port}");
             }
             catch (Exception exception)
             {
@@ -936,12 +946,7 @@ public partial class MainWindow : Window
                     LastResult = "Autenticada",
                 });
             }
-            else if (MessageBox.Show(
-                         this,
-                         $"Conexão autenticada com {state.Host}:{state.Port}. Salvar como computador conhecido?",
-                         "Salvar computador",
-                         MessageBoxButton.YesNo,
-                         MessageBoxImage.Question) == MessageBoxResult.Yes)
+            else if (AskToSaveComputer(state.Host, state.Port) == MessageBoxResult.Yes)
             {
                 var ip = IPAddress.TryParse(state.Host, out _) ? state.Host : null;
                 var hostname = ip is null ? state.Host : null;
@@ -1575,6 +1580,14 @@ public partial class MainWindow : Window
             RemoteImage.LostKeyboardFocus += AppRemoteImage_LostKeyboardFocus;
             Tab = new TabItem { Header = DisplayName, Content = CreateContent(), Tag = this };
             Tab.DataContext = this;
+            RenderQueue = new FramebufferRenderQueue(
+                Dispatcher.CurrentDispatcher,
+                ApplyFramebufferUpdate,
+                exception =>
+                {
+                    UiDiagnostics.Write("Framebuffer render failed", exception.Message);
+                    SetStatus($"Falha ao renderizar o framebuffer: {exception.Message}");
+                });
             PointerTimer = new DispatcherTimer { Interval = TimeSpan.FromMilliseconds(16), Tag = this };
             PointerTimer.Tick += PointerTimer_Tick;
             PointerTimer.Start();
@@ -1625,6 +1638,7 @@ public partial class MainWindow : Window
         public CheckBox ViewOnlyCheckBox { get; private set; } = null!;
         public TextBlock StatusText { get; private set; } = null!;
         public WriteableBitmap? Bitmap { get; set; }
+        public FramebufferRenderQueue RenderQueue { get; }
         public Task? RunTask { get; set; }
         public DateTimeOffset StartedUtc { get; set; }
         public long? HistoryEntryId { get; set; }
@@ -1692,7 +1706,43 @@ public partial class MainWindow : Window
             }
         }
 
+        private void ApplyFramebufferUpdate(FramebufferRenderUpdate update)
+        {
+            if (IsClosing)
+            {
+                return;
+            }
+
+            if (Bitmap is null ||
+                Bitmap.PixelWidth != update.FramebufferWidth ||
+                Bitmap.PixelHeight != update.FramebufferHeight)
+            {
+                Bitmap = new WriteableBitmap(
+                    update.FramebufferWidth,
+                    update.FramebufferHeight,
+                    96,
+                    96,
+                    PixelFormats.Bgr32,
+                    null);
+                RemoteImage.Source = Bitmap;
+            }
+
+            Bitmap.WritePixels(
+                new Int32Rect(update.X, update.Y, update.Width, update.Height),
+                update.Pixels,
+                update.Width * 4,
+                0);
+            if (!_renderStarted)
+            {
+                _renderStarted = true;
+                UiDiagnostics.Write("Framebuffer rendering started", $"dimensions={update.FramebufferWidth}x{update.FramebufferHeight}");
+            }
+
+            RecordFrame();
+        }
+
         private int _frameCount;
+        private bool _renderStarted;
         private long _lastFpsUpdate = Stopwatch.GetTimestamp();
         private Grid FitHost { get; set; } = null!;
         private ScrollViewer ActualHost { get; set; } = null!;

@@ -67,6 +67,66 @@ public class ViewerSessionTests
     }
 
     [Fact]
+    public async Task DisconnectDuringFramebufferReadIsBoundedAndViewerCanReconnect()
+    {
+        using var server = new VncServer(
+            new ConnectionSettings
+            {
+                Port = 0,
+                BindAddress = "127.0.0.1",
+                Password = "password",
+                Width = 64,
+                Height = 48,
+            },
+            new ChangingScreenCapture());
+        var serverClientDisconnected = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        server.StatusChanged += (_, message) =>
+        {
+            if (message.StartsWith("Viewer disconnected:", StringComparison.Ordinal))
+            {
+                serverClientDisconnected.TrySetResult();
+            }
+        };
+        server.Start();
+
+        await using var viewer = new VncViewerSession(new ConnectionSettings
+        {
+            Host = "127.0.0.1",
+            Port = server.BoundPort,
+            Password = "password",
+        });
+        var updates = 0;
+        var secondUpdate = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        viewer.FramebufferUpdated += (_, _) =>
+        {
+            if (Interlocked.Increment(ref updates) >= 2)
+            {
+                secondUpdate.TrySetResult();
+            }
+        };
+
+        await viewer.ConnectAsync().WaitAsync(TimeSpan.FromSeconds(5));
+        using var firstRunCancellation = new CancellationTokenSource();
+        var firstRun = viewer.RunAsync(firstRunCancellation.Token);
+        await secondUpdate.Task.WaitAsync(TimeSpan.FromSeconds(5));
+        firstRunCancellation.Cancel();
+        await viewer.DisconnectAsync().WaitAsync(TimeSpan.FromSeconds(5));
+        await firstRun.WaitAsync(TimeSpan.FromSeconds(5));
+        await serverClientDisconnected.Task.WaitAsync(TimeSpan.FromSeconds(5));
+        Assert.False(viewer.IsConnected);
+
+        var reconnectedFrame = new TaskCompletionSource<FramebufferUpdatedEventArgs>(TaskCreationOptions.RunContinuationsAsynchronously);
+        viewer.FramebufferUpdated += (_, args) => reconnectedFrame.TrySetResult(args);
+        await viewer.ConnectAsync().WaitAsync(TimeSpan.FromSeconds(5));
+        using var secondRunCancellation = new CancellationTokenSource();
+        var secondRun = viewer.RunAsync(secondRunCancellation.Token);
+        Assert.NotEmpty((await reconnectedFrame.Task.WaitAsync(TimeSpan.FromSeconds(5))).Rectangles);
+        secondRunCancellation.Cancel();
+        await viewer.DisconnectAsync().WaitAsync(TimeSpan.FromSeconds(5));
+        await secondRun.WaitAsync(TimeSpan.FromSeconds(5));
+    }
+
+    [Fact]
     public async Task ViewerNeverFallsBackToUnauthenticatedServerByDefault()
     {
         using var listener = new TcpListener(IPAddress.Loopback, 0);

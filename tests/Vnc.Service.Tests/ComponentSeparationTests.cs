@@ -123,7 +123,7 @@ public sealed class ComponentSeparationTests
         Assert.Equal("true/pm", manifest.Descendants(settings2005 + "dpiAware").Single().Value);
         Assert.Equal("PerMonitorV2, PerMonitor", manifest.Descendants(settings2016 + "dpiAwareness").Single().Value);
         var setup = File.ReadAllText(Path.Combine(root, "installer", "LucyVNC.iss"));
-        Assert.Contains("#define AppVersion \"2.4.4\"", setup, StringComparison.Ordinal);
+        Assert.Contains("#define AppVersion \"2.4.5\"", setup, StringComparison.Ordinal);
         var serviceProject = XDocument.Load(Path.Combine(root, "src", "Vnc.Service", "Vnc.Service.csproj"));
         Assert.Empty(serviceProject.Descendants("ApplicationManifest"));
         foreach (var projectName in new[] { "Vnc.Agent", "Vnc.Tray" })

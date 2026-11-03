@@ -174,4 +174,17 @@ Remover do Windows Service qualquer configuração gráfica DPI que cause falha 
 - Primeira tentativa paralela de testes disputou arquivo intermediário `Vnc.Core.dll` com Microsoft Defender (CS2012); repetição sequencial passou (2/2). Sem alteração de timeout.
 
 ### Próxima ação exata
-Executar restore/build Release e testes completos; publicar componentes self-contained `win-x64`, compilar Setup 2.4.5 usando o ISCC explícito, verificar artefato/hash e criar commits locais. A transferência segura permanece pendente; não adicionar botão até haver canal negociado e autenticado.
+Marco A e pacote 2.4.5 concluídos:
+- Restore `dotnet restore LucyVNC.slnx` passou.
+- Build `dotnet build LucyVNC.slnx -c Release --no-restore` passou sem warnings/errors.
+- Suíte `dotnet test LucyVNC.slnx -c Release --no-build` passou 152/152 (Protocol 28, Server 28, Agent 8, Viewer 4, Integration 9, Infrastructure 42, Service 33). Uma falha inicial foi uma asserção de versão ainda referindo 2.4.4 após atualizar o instalador; asserção atualizada para 2.4.5, teste focado e suíte completa passaram. Não se enfraqueceu teste.
+- Publicados Manager, Worker, Agent e Server UI self-contained `win-x64`.
+- Inno Setup 6.7.3 compilou `artifacts\LucyVNC-Setup-2.4.5-x64.exe` (200.937.335 bytes; SHA-256 `5C734E4B107B2A86E230324E6C83B27EC586A28BEA9FF3401A0710F5FDD47F72`).
+- O teste existente Worker+Agent+Viewer loopback passou; prova inicial funcional do worker e conexão RFB em modo console/teste, não inicialização SCM real ou serviço instalado. Nenhum serviço foi instalado/iniciado nesta tarefa.
+- A captura física a 150% (144 DPI, 1920×1080 e Raw completo) continua comprovada pelo probe real da 2.4.4; o código do Agent/captura não foi alterado nesta etapa. Nenhum teste a outras escalas.
+- Commit de código do Marco A: `4d52a55` (`fix: remove DPI initialization from Windows Worker`). O ajuste de asserção de versão e este relatório final serão commitados juntos.
+- Transferência de arquivos não implementada nem exibida na UI: RFB atual é plaintext após autenticação DES, sem TLS nem negociação de capacidade/canal proprietário. Implementar transferência neste transporte violaria o requisito de criptografia/autorização. Próxima ação de transferência: projetar e negociar canal criptográfico autenticado com escopo de sessão antes de qualquer UI/operação de arquivos.
+- Worktree será conferido limpo após commit final. Não fazer push/merge nem operações no firewall/serviço real.
+
+### Próxima ação exata
+Commitar `tests/Vnc.Service.Tests/ComponentSeparationTests.cs` e este handoff, verificar `git status --short --branch`; em sessão futura, iniciar transferência apenas após definir canal seguro negociado, ou validar Setup 2.4.5/SCM em máquina de teste autorizada.

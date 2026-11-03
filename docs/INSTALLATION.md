@@ -31,17 +31,57 @@ The **Acessos** page operates the existing foreground Server in the logged-in in
 
 Do not expose classic VNC directly to an untrusted network. The protocol does not encrypt framebuffer or input traffic. Use loopback or a trusted VPN/tunnel and configure any firewall rule manually and narrowly. LucyVNC does not make firewall changes.
 
-## LucyServer Windows Service groundwork
+## LucyServer Worker and interactive Agent
 
-The .NET Worker Service executable and administrator scripts are included. The worker opens an authenticated loopback RFB listener when remote sharing is enabled and the `LUCYVNC_VNC_PASSWORD` environment variable holds an eight-character ASCII VNC password; without both it keeps no listener open. The interactive-session agent and authenticated IPC are not implemented yet, so installing or starting it does not by itself provide remote desktop sharing. The Manager displays Service Control Manager status; service installation and control are currently manual.
+The Worker Service and the interactive-session Agent are separate executables. The Agent performs desktop capture and `SendInput` in the logged-in user's session; the Worker owns the RFB listener and connects to the Agent over a SID-restricted, versioned named-pipe protocol. The automated process integration test uses synthetic capture/input and does not prove real desktop capture, real input injection, SCM startup, or service-to-user-session launch. Production service lifecycle management of the Agent is not implemented.
 
-If you explicitly need to validate only the worker's SCM lifecycle, publish the executable:
+For a controlled **development-only** local test, publish/build the service and Agent first. This run starts the real Agent, which can move the local cursor and type into the interactive desktop when a connected Viewer sends input. Use a disposable test session with no sensitive application focused. VNC transport is unencrypted; this procedure binds only loopback and does not create firewall rules or install a service.
+
+Create a user-only configuration. By default sharing is disabled; the explicit switch below enables the loopback test listener:
+
+```powershell
+.\scripts\New-LucyServerDevelopmentConfig.ps1 -EnableSharing
+```
+
+The script refuses to replace an existing configuration unless `-Force` is supplied. Review the existing file before using that option.
+
+In **PowerShell window 1**, start the real interactive Agent:
+
+```powershell
+$sid = [Security.Principal.WindowsIdentity]::GetCurrent().User.Value
+$env:LUCYVNC_AGENT_AUTHORIZED_SID = $sid
+& ".\src\Vnc.Agent\bin\Release\net8.0-windows\Vnc.Agent.exe"
+```
+
+In **PowerShell window 2**, set the matching Worker identity, enter a temporary eight-character ASCII VNC password, and run console mode:
+
+```powershell
+$sid = [Security.Principal.WindowsIdentity]::GetCurrent().User.Value
+$env:LUCYVNC_AGENT_SID = $sid
+$env:LUCYVNC_AGENT_PIPE = "LucyVNCAgent"
+$env:LUCYVNC_SERVICE_CONFIG = Join-Path $env:LOCALAPPDATA "LucyVNC\Development\service.json"
+$securePassword = Read-Host "Temporary VNC password (8 ASCII characters)" -AsSecureString
+$passwordBuffer = [Runtime.InteropServices.Marshal]::SecureStringToBSTR($securePassword)
+try {
+    $env:LUCYVNC_VNC_PASSWORD = [Runtime.InteropServices.Marshal]::PtrToStringBSTR($passwordBuffer)
+    & ".\src\Vnc.Service\bin\Release\net8.0-windows\Vnc.Service.exe" --console
+}
+finally {
+    [Runtime.InteropServices.Marshal]::ZeroFreeBSTR($passwordBuffer)
+    $securePassword.Dispose()
+    Remove-Item Env:\LUCYVNC_VNC_PASSWORD -ErrorAction SilentlyContinue
+}
+```
+
+Connect LucyViewer to `127.0.0.1:5901`. Stop the Worker by entering `STOP` in window 2, then stop the Agent with Ctrl+C in window 1. The password exists in the Worker process environment only; do not capture or share diagnostic output from a test containing sensitive information. Do not use this procedure on a production desktop.
+
+For optional SCM lifecycle testing only, publish the executable:
 
 ```powershell
 dotnet publish "src/Vnc.Service/Vnc.Service.csproj" -c Release -r win-x64 --self-contained true
 ```
 
-In an elevated PowerShell session, use the scripts below. Installation is Automatic but leaves the service stopped; start is a separate action. Status reports `RemoteSharingAvailable = false`. Stop and uninstall ask for confirmation. None of the scripts creates or edits firewall rules.
+In an elevated PowerShell session, use the scripts below. Installation is Automatic but leaves the service stopped; start is a separate action. No service-to-interactive-user Agent launcher is provided, so SCM installation alone does not provide desktop sharing. Stop and uninstall ask for confirmation. None of the scripts creates or edits firewall rules.
 
 ```powershell
 .\scripts\Install-LucyServerService.ps1
@@ -51,4 +91,4 @@ In an elevated PowerShell session, use the scripts below. Installation is Automa
 .\scripts\Uninstall-LucyServerService.ps1
 ```
 
-Do not register `LucyViewer.exe` as a service: WPF, screen capture, and `SendInput` require the user's interactive session, while a Windows Service normally runs in Session 0. A production LucyServer still needs a user-visible session agent, authenticated and ACL-restricted IPC, service-side VNC listener/authentication, login/logout/session-switch handling, and explicit consent before enabling remote control. Session 0 provides no supported access to the signed-in desktop; secure desktop, UAC, and pre-login control are not implemented.
+Do not register `LucyViewer.exe` or `Vnc.Agent.exe` as a Windows Service: WPF, screen capture, and `SendInput` require the user's interactive session, while a Windows Service normally runs in Session 0. Service/Agent IPC is authenticated by Windows user SID and protected with pipe ACLs, but is not a binary-signing boundary and currently has only same-user development validation. Session 0 provides no supported access to the signed-in desktop; secure desktop, UAC, and pre-login control are not implemented.
